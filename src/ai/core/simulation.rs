@@ -14,6 +14,7 @@ use super::intent::*;
 use super::tick_systems::*;
 use super::tick_world::*;
 use super::metrics::compute_metrics;
+use super::verify::verify_tick;
 
 pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimState, Vec<SimEvent>) {
     state.tick += 1;
@@ -214,6 +215,18 @@ pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimStat
                 try_start_hero_ability(idx, ability_index, target, tick, &mut state, &mut events);
             }
         }
+    }
+
+    // Runtime verification: check invariants after every tick in debug/test builds.
+    #[cfg(debug_assertions)]
+    {
+        let report = verify_tick(&state);
+        debug_assert!(
+            report.is_ok(),
+            "Runtime verification failed at tick {}: {:?}",
+            state.tick,
+            report.violations,
+        );
     }
 
     (state, events)

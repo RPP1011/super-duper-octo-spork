@@ -15,6 +15,7 @@ mod tick_systems;
 mod tick_world;
 mod simulation;
 mod metrics;
+pub mod verify;
 pub mod oracle;
 pub mod decision_log;
 pub mod dataset;
@@ -37,3 +38,4 @@ pub use simulation::{
 };
 pub use helpers::is_alive;
 pub use math::{distance, move_towards, move_away, position_at_range};
+pub use verify::{verify_tick, Violation, VerificationReport};

@@ -35,6 +35,8 @@ pub use events::SimEvent;
 pub use simulation::{
     step, run_replay, ReplayResult,
     sample_duel_state, sample_duel_script,
+    verify_determinism, verify_replay_against_hashes,
+    DeterminismReport, hash_sim_state,
 };
 pub use helpers::is_alive;
 pub use math::{distance, move_towards, move_away, position_at_range};

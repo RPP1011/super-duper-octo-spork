@@ -107,7 +107,12 @@ pub(crate) fn place_l_shape(
 
     // orientation: 0=right-down, 1=left-down, 2=left-up, 3=right-up
     let (hc0, hc1, hr0, hr1) = match orientation {
-        0 => (anchor_col, anchor_col + a - 1, anchor_row, anchor_row + t - 1),
+        0 => (
+            anchor_col,
+            anchor_col + a - 1,
+            anchor_row,
+            anchor_row + t - 1,
+        ),
         1 => (
             anchor_col.saturating_sub(a - 1),
             anchor_col,
@@ -128,7 +133,12 @@ pub(crate) fn place_l_shape(
         ),
     };
     let (vc0, vc1, vr0, vr1) = match orientation {
-        0 => (anchor_col, anchor_col + t - 1, anchor_row, anchor_row + a - 1),
+        0 => (
+            anchor_col,
+            anchor_col + t - 1,
+            anchor_row,
+            anchor_row + a - 1,
+        ),
         1 => (
             anchor_col.saturating_sub(t - 1),
             anchor_col,
@@ -185,10 +195,10 @@ pub(crate) fn place_cover_cluster(
         let dr = rng.next_usize_range(0, spread);
         let sign_c: isize = if rng.next_u64() % 2 == 0 { 1 } else { -1 };
         let sign_r: isize = if rng.next_u64() % 2 == 0 { 1 } else { -1 };
-        let c = (centre_col as isize + sign_c * dc as isize)
-            .clamp(1, nav.cols as isize - 2) as usize;
-        let r = (centre_row as isize + sign_r * dr as isize)
-            .clamp(1, nav.rows as isize - 2) as usize;
+        let c =
+            (centre_col as isize + sign_c * dc as isize).clamp(1, nav.cols as isize - 2) as usize;
+        let r =
+            (centre_row as isize + sign_r * dr as isize).clamp(1, nav.rows as isize - 2) as usize;
         let w = rng.next_usize_range(1, 2);
         let h = rng.next_usize_range(1, 2);
         let ec = (c + w - 1).min(nav.cols - 2);
@@ -222,10 +232,14 @@ pub(crate) fn place_corridor_walls(
     let len = col_hi.saturating_sub(col_lo);
 
     if top_row > 0 && top_row < nav.rows - 1 {
-        regions.extend(place_wall_segment(nav, rng, col_lo, top_row, len, true, 0, height));
+        regions.extend(place_wall_segment(
+            nav, rng, col_lo, top_row, len, true, 0, height,
+        ));
     }
     if bot_row > 0 && bot_row < nav.rows - 1 {
-        regions.extend(place_wall_segment(nav, rng, col_lo, bot_row, len, true, 0, height));
+        regions.extend(place_wall_segment(
+            nav, rng, col_lo, bot_row, len, true, 0, height,
+        ));
     }
     regions
 }
@@ -295,6 +309,85 @@ pub(crate) fn place_sandbag_arc(
             col1: c,
             row0: r,
             row1: r,
+            height,
+        });
+    }
+    regions
+}
+
+/// Place a moat (ring of unwalkable cells) around a central area with bridge gaps.
+/// Creates defensive terrain forcing attackers through chokepoints.
+pub(crate) fn place_moat(
+    nav: &mut NavGrid,
+    rng: &mut Lcg,
+    centre_col: usize,
+    centre_row: usize,
+    inner_radius: usize,
+    bridge_count: usize,
+) -> Vec<ObstacleRegion> {
+    let mut regions = Vec::new();
+    let r = inner_radius.max(2);
+    // Pick bridge directions (expressed as octant indices 0..8)
+    let mut bridge_octants: Vec<usize> = Vec::new();
+    let n_bridges = bridge_count.clamp(1, 4);
+    let step = 8 / n_bridges;
+    let offset = rng.next_usize_range(0, step);
+    for i in 0..n_bridges {
+        bridge_octants.push((offset + i * step) % 8);
+    }
+
+    for angle_step in 0..32 {
+        let angle = (angle_step as f32 / 32.0) * std::f32::consts::TAU;
+        let dc = (angle.cos() * r as f32).round() as isize;
+        let dr = (angle.sin() * r as f32).round() as isize;
+        let c = (centre_col as isize + dc).clamp(1, nav.cols as isize - 2) as usize;
+        let row = (centre_row as isize + dr).clamp(1, nav.rows as isize - 2) as usize;
+
+        // Check if this cell is on a bridge
+        let octant = ((angle / std::f32::consts::TAU * 8.0).round() as usize) % 8;
+        if bridge_octants.contains(&octant) {
+            continue;
+        }
+
+        nav.set_walkable_rect(c, row, c, row, false);
+        regions.push(ObstacleRegion {
+            col0: c,
+            col1: c,
+            row0: row,
+            row1: row,
+            height: 0.3,
+        });
+    }
+    regions
+}
+
+/// Place a spiral pattern of obstacles radiating from centre.
+/// Creates winding paths that force non-linear movement.
+pub(crate) fn place_spiral(
+    nav: &mut NavGrid,
+    _rng: &mut Lcg,
+    centre_col: usize,
+    centre_row: usize,
+    max_radius: usize,
+    turns: f32,
+    height: f32,
+) -> Vec<ObstacleRegion> {
+    let mut regions = Vec::new();
+    let steps = (max_radius as f32 * turns * 6.0) as usize;
+    for i in 0..steps {
+        let t = i as f32 / steps.max(1) as f32;
+        let cur_r = t * max_radius as f32;
+        let angle = t * turns * std::f32::consts::TAU;
+        let dc = (angle.cos() * cur_r).round() as isize;
+        let dr = (angle.sin() * cur_r).round() as isize;
+        let c = (centre_col as isize + dc).clamp(1, nav.cols as isize - 2) as usize;
+        let row = (centre_row as isize + dr).clamp(1, nav.rows as isize - 2) as usize;
+        nav.set_walkable_rect(c, row, c, row, false);
+        regions.push(ObstacleRegion {
+            col0: c,
+            col1: c,
+            row0: row,
+            row1: row,
             height,
         });
     }

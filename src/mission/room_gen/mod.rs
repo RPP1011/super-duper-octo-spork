@@ -1,6 +1,7 @@
 mod lcg;
 mod nav;
 mod primitives;
+pub mod scoring;
 mod templates;
 mod visuals;
 pub(crate) mod environment;

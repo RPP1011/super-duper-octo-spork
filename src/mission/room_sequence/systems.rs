@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::ai::core::{SimVec2, Team};
 use crate::mission::{
     enemy_templates::{default_enemy_wave, generate_boss, is_climax_room, BOSS_UNIT_ID},
-    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
+    room_gen::{generate_room, scoring::generate_interesting_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
     sim_bridge::{EnemyAiState, MissionOutcome, MissionSimState, PlayerUnitMarker},
     unit_vis::{spawn_unit_visual, UnitVisual},
 };
@@ -184,7 +184,7 @@ pub fn advance_room_system(
         None => return,
     };
     let new_seed = seq.seed + seq.current_index as u64;
-    let new_layout = generate_room(new_seed, new_room_type);
+    let (new_layout, _score) = generate_interesting_room(new_seed, new_room_type, 6);
 
     seq.current_room_origin.z -= new_layout.depth + 5.0;
     let origin = seq.current_room_origin;

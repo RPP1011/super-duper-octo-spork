@@ -237,7 +237,16 @@ pub fn generate_room(seed: u64, room_type: game_core::RoomType) -> RoomLayout {
             let inner_col_hi = (cols as f32 * 0.75) as usize;
             let inner_row_lo: usize = 1;
             let inner_row_hi = rows - 2;
-            let num_ramps = rng.next_usize_range(0, 2);
+            // Guarantee at least 1 ramp for Setpiece/Climax, 0-2 for others
+            let min_ramps = match room_type {
+                game_core::RoomType::Setpiece | game_core::RoomType::Climax => 1,
+                _ => 0,
+            };
+            let max_ramps = match room_type {
+                game_core::RoomType::Setpiece | game_core::RoomType::Climax => 3,
+                _ => 2,
+            };
+            let num_ramps = rng.next_usize_range(min_ramps, max_ramps);
             for _ in 0..num_ramps {
                 let start_col = rng.next_usize_range(inner_col_lo, inner_col_hi.saturating_sub(3));
                 let start_row = rng.next_usize_range(inner_row_lo, inner_row_hi.saturating_sub(3));

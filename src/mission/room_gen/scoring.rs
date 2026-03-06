@@ -372,28 +372,12 @@ mod tests {
     use crate::game_core::RoomType;
     use crate::mission::room_gen::generate_room;
 
-    /// Build a hand-crafted adversarial room that passes all validation but
-    /// is tactically dead: a big empty box with a single thin wall of
-    /// pillars evenly spaced across the exact centre.
-    ///
-    /// It passes validate_layout because:
-    /// - blocked% ≈ 3% (above 2% threshold)
-    /// - player↔enemy BFS connectivity works (gaps between pillars)
-    ///
-    /// But it's boring because:
-    /// - Perfect left/right symmetry
-    /// - Uniform sightlines from every position
-    /// - Cover only available in one narrow band
-    /// - Zero elevation variation
-    /// - No chokepoints (every cell has 3+ walkable neighbors)
-    /// - Near-100% LoS between spawns (pillars have gaps)
-    fn build_adversarial_room() -> RoomLayout {
-        let cols = 20usize;
-        let rows = 20usize;
+    /// Helper to build an adversarial room shell with perimeter walls.
+    fn adversarial_shell(cols: usize, rows: usize) -> (NavGrid, crate::ai::core::SimVec2, crate::ai::core::SimVec2) {
+        use crate::ai::core::SimVec2;
         let cell_size = 1.0;
         let mut nav = NavGrid::new(cols, rows, cell_size);
 
-        // Perimeter walls
         for c in 0..cols {
             nav.set_walkable_rect(c, 0, c, 0, false);
             nav.set_walkable_rect(c, rows - 1, c, rows - 1, false);
@@ -402,38 +386,35 @@ mod tests {
             nav.set_walkable_rect(0, r, 0, r, false);
             nav.set_walkable_rect(cols - 1, r, cols - 1, r, false);
         }
+        let player_center = SimVec2 { x: 3.0, y: rows as f32 / 2.0 };
+        let enemy_center = SimVec2 { x: cols as f32 - 3.0, y: rows as f32 / 2.0 };
+        (nav, player_center, enemy_center)
+    }
 
-        // A single thin line of pillars at column 10, evenly spaced
-        // (every other row blocked) — just enough to hit 2% blocked
-        for r in (2..rows - 2).step_by(2) {
-            nav.set_walkable_rect(cols / 2, r, cols / 2, r, false);
-        }
-
-        // Spawns on opposite sides
+    fn adversarial_layout(nav: NavGrid, cols: usize, rows: usize) -> RoomLayout {
         use crate::ai::core::SimVec2;
-        let player_spawn = crate::mission::room_gen::SpawnZone {
-            positions: vec![
-                SimVec2 { x: 2.5, y: 10.5 },
-                SimVec2 { x: 3.5, y: 10.5 },
-                SimVec2 { x: 2.5, y: 11.5 },
-                SimVec2 { x: 3.5, y: 11.5 },
-            ],
-        };
-        let enemy_spawn = crate::mission::room_gen::SpawnZone {
-            positions: vec![
-                SimVec2 { x: 17.5, y: 10.5 },
-                SimVec2 { x: 16.5, y: 10.5 },
-                SimVec2 { x: 17.5, y: 11.5 },
-                SimVec2 { x: 16.5, y: 11.5 },
-            ],
-        };
-
+        let pc = SimVec2 { x: 3.0, y: rows as f32 / 2.0 };
+        let ec = SimVec2 { x: cols as f32 - 3.0, y: rows as f32 / 2.0 };
         RoomLayout {
             width: cols as f32,
             depth: rows as f32,
             nav,
-            player_spawn,
-            enemy_spawn,
+            player_spawn: crate::mission::room_gen::SpawnZone {
+                positions: vec![
+                    SimVec2 { x: pc.x - 0.5, y: pc.y - 0.5 },
+                    SimVec2 { x: pc.x + 0.5, y: pc.y - 0.5 },
+                    SimVec2 { x: pc.x - 0.5, y: pc.y + 0.5 },
+                    SimVec2 { x: pc.x + 0.5, y: pc.y + 0.5 },
+                ],
+            },
+            enemy_spawn: crate::mission::room_gen::SpawnZone {
+                positions: vec![
+                    SimVec2 { x: ec.x - 0.5, y: ec.y - 0.5 },
+                    SimVec2 { x: ec.x + 0.5, y: ec.y - 0.5 },
+                    SimVec2 { x: ec.x - 0.5, y: ec.y + 0.5 },
+                    SimVec2 { x: ec.x + 0.5, y: ec.y + 0.5 },
+                ],
+            },
             room_type: RoomType::Entry,
             seed: 0,
             floor_heights: vec![0.0; (cols + 1) * (rows + 1)],
@@ -446,85 +427,178 @@ mod tests {
         }
     }
 
-    #[test]
-    fn adversarial_room_exposes_scoring_gap() {
-        let boring = build_adversarial_room();
-        let score = static_interest_score(&boring);
+    /// Variant 1: "Pillar Line" — single symmetric line of spaced pillars.
+    fn build_adversarial_pillar_line() -> RoomLayout {
+        let (cols, rows) = (20, 20);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        for r in (2..rows - 2).step_by(2) {
+            nav.set_walkable_rect(cols / 2, r, cols / 2, r, false);
+        }
+        adversarial_layout(nav, cols, rows)
+    }
 
-        println!("=== ADVERSARIAL ROOM (boring pillar line) ===");
-        println!("  sightline:   {:.3}", score.sightline);
-        println!("  cover:       {:.3}", score.cover);
-        println!("  elevation:   {:.3}", score.elevation);
-        println!("  asymmetry:   {:.3}", score.asymmetry);
-        println!("  chokepoints: {:.3}", score.chokepoints);
-        println!("  LoS frag:    {:.3}", score.los_frag);
-        println!("  TOTAL:       {:.3}", score.total);
-
-        // The adversarial room has zero elevation — scorer detects this.
-        assert!(score.elevation < 0.01, "no elevation = 0");
-
-        // Count how many generated rooms this boring room actually beats.
-        let room_types = [
-            RoomType::Entry,
-            RoomType::Pressure,
-            RoomType::Pivot,
-            RoomType::Setpiece,
-            RoomType::Climax,
-        ];
-        let mut total = 0;
-        let mut adversarial_wins = 0;
-        for rt in &room_types {
-            for seed in 0..20u64 {
-                let layout = generate_room(seed, *rt);
-                let s = static_interest_score(&layout);
-                total += 1;
-                if score.total > s.total {
-                    adversarial_wins += 1;
+    /// Variant 2: "Open Field" — large room with almost no obstacles.
+    /// Just 4 tiny pillars to barely hit 2% blocked.
+    fn build_adversarial_open_field() -> RoomLayout {
+        let (cols, rows) = (32, 32);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        // Place minimal blocks: 4 symmetric 3x3 blocks in corners
+        for &(bc, br) in &[(8, 8), (8, 23), (23, 8), (23, 23)] {
+            for dc in 0..3 {
+                for dr in 0..3 {
+                    nav.set_walkable_rect(bc + dc, br + dr, bc + dc, br + dr, false);
                 }
             }
         }
-        let adversarial_win_pct = adversarial_wins as f32 / total as f32 * 100.0;
-        println!(
-            "Adversarial room beats {adversarial_wins}/{total} ({adversarial_win_pct:.0}%) generated rooms"
-        );
-        // This documents the gap: without candidate selection, the boring
-        // room beats a significant fraction of generated rooms.
-        // The candidate_selection_improves_score test shows how to fix this.
+        adversarial_layout(nav, cols, rows)
+    }
+
+    /// Variant 3: "Perfect Grid" — evenly spaced pillar grid, maximally uniform.
+    fn build_adversarial_uniform_grid() -> RoomLayout {
+        let (cols, rows) = (20, 20);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        for r in (3..rows - 3).step_by(3) {
+            for c in (3..cols - 3).step_by(3) {
+                nav.set_walkable_rect(c, r, c, r, false);
+            }
+        }
+        adversarial_layout(nav, cols, rows)
+    }
+
+    /// Variant 4: "Maze" — too many narrow corridors, no open space.
+    fn build_adversarial_maze() -> RoomLayout {
+        let (cols, rows) = (20, 20);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        // Alternating horizontal walls with small gaps
+        for r in (3..rows - 3).step_by(3) {
+            for c in 1..cols - 1 {
+                // Leave a 1-cell gap at alternating ends
+                let gap_col = if (r / 3) % 2 == 0 { cols - 2 } else { 1 };
+                if c != gap_col {
+                    nav.set_walkable_rect(c, r, c, r, false);
+                }
+            }
+        }
+        adversarial_layout(nav, cols, rows)
+    }
+
+    /// Variant 5: "Symmetric Arena" — perfectly mirrored obstacles (what
+    /// Setpiece/Climax templates often produce).
+    fn build_adversarial_symmetric_arena() -> RoomLayout {
+        let (cols, rows) = (30, 30);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        // Symmetric L-shapes in all 4 corners
+        for &(bc, br) in &[(5, 5), (5, 24), (24, 5), (24, 24)] {
+            for i in 0..4 {
+                nav.set_walkable_rect(bc + i, br, bc + i, br, false);
+                nav.set_walkable_rect(bc, br + i, bc, br + i, false);
+            }
+        }
+        // Symmetric wall segments
+        for c in 10..20 {
+            nav.set_walkable_rect(c, 10, c, 10, false);
+            nav.set_walkable_rect(c, 19, c, 19, false);
+        }
+        for r in 10..20 {
+            nav.set_walkable_rect(10, r, 10, r, false);
+            nav.set_walkable_rect(19, r, 19, r, false);
+        }
+        adversarial_layout(nav, cols, rows)
     }
 
     #[test]
-    fn candidate_selection_beats_adversarial() {
-        let adversarial_score = static_interest_score(&build_adversarial_room()).total;
-
-        // With candidate selection (pick best of 8), most room types should
-        // beat the adversarial baseline.
-        let room_types = [
-            RoomType::Entry,
-            RoomType::Pressure,
-            RoomType::Pivot,
-            RoomType::Setpiece,
-            RoomType::Climax,
+    fn adversarial_suite_exposes_failure_modes() {
+        let variants: Vec<(&str, RoomLayout)> = vec![
+            ("Pillar Line", build_adversarial_pillar_line()),
+            ("Open Field", build_adversarial_open_field()),
+            ("Uniform Grid", build_adversarial_uniform_grid()),
+            ("Maze", build_adversarial_maze()),
+            ("Symmetric Arena", build_adversarial_symmetric_arena()),
         ];
 
-        let mut beaten = 0;
-        for rt in &room_types {
-            let (_, selected) = generate_interesting_room(42, *rt, 8);
-            if selected.total >= adversarial_score {
-                beaten += 1;
+        println!("\n=== ADVERSARIAL SUITE ===");
+        println!("{:<18} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6}  beats",
+            "variant", "sight", "cover", "elev", "asym", "choke", "los", "TOTAL");
+
+        for (name, layout) in &variants {
+            let s = static_interest_score(layout);
+
+            // Count how many generated rooms each variant beats
+            let mut wins = 0;
+            let mut total = 0;
+            for rt in &[RoomType::Entry, RoomType::Pressure, RoomType::Pivot,
+                        RoomType::Setpiece, RoomType::Recovery, RoomType::Climax] {
+                for seed in 0..20u64 {
+                    let gen = generate_room(seed, *rt);
+                    let gs = static_interest_score(&gen);
+                    total += 1;
+                    if s.total > gs.total {
+                        wins += 1;
+                    }
+                }
             }
-            println!(
-                "{:?}: selected={:.3} vs adversarial={:.3} {}",
-                rt,
-                selected.total,
-                adversarial_score,
-                if selected.total >= adversarial_score { "WIN" } else { "LOSE" }
-            );
+
+            println!("{:<18} {:>6.3} {:>6.3} {:>6.3} {:>6.3} {:>6.3} {:>6.3} {:>6.3}  {wins}/{total} ({:.0}%)",
+                name, s.sightline, s.cover, s.elevation, s.asymmetry,
+                s.chokepoints, s.los_frag, s.total,
+                wins as f32 / total as f32 * 100.0);
         }
-        // At least 3/5 room types should beat adversarial with selection
-        assert!(
-            beaten >= 3,
-            "only {beaten}/5 room types beat adversarial with candidate selection"
-        );
+    }
+
+    #[test]
+    fn diagnose_weakest_templates() {
+        // For each room type, find the worst seed and print its full breakdown
+        println!("\n=== WEAKEST GENERATED ROOMS (per type) ===");
+        for rt in &[RoomType::Entry, RoomType::Pressure, RoomType::Pivot,
+                    RoomType::Setpiece, RoomType::Recovery, RoomType::Climax] {
+            let mut worst_score = f32::MAX;
+            let mut worst_breakdown = None;
+            let mut worst_seed = 0u64;
+
+            for seed in 0..50u64 {
+                let layout = generate_room(seed, *rt);
+                let s = static_interest_score(&layout);
+                if s.total < worst_score {
+                    worst_score = s.total;
+                    worst_breakdown = Some(s);
+                    worst_seed = seed;
+                }
+            }
+
+            let s = worst_breakdown.unwrap();
+            println!("{:?} seed={worst_seed}: total={:.3}  sight={:.3} cover={:.3} elev={:.3} asym={:.3} choke={:.3} los={:.3}",
+                rt, s.total, s.sightline, s.cover, s.elevation, s.asymmetry, s.chokepoints, s.los_frag);
+        }
+    }
+
+    #[test]
+    fn candidate_selection_beats_all_adversarial() {
+        let variants: Vec<(&str, RoomLayout)> = vec![
+            ("Pillar Line", build_adversarial_pillar_line()),
+            ("Open Field", build_adversarial_open_field()),
+            ("Uniform Grid", build_adversarial_uniform_grid()),
+            ("Maze", build_adversarial_maze()),
+            ("Symmetric Arena", build_adversarial_symmetric_arena()),
+        ];
+
+        let max_adversarial = variants.iter()
+            .map(|(_, l)| static_interest_score(l).total)
+            .fold(0.0f32, |a, b| a.max(b));
+
+        println!("\nMax adversarial score: {max_adversarial:.3}");
+        println!("Candidate selection (best of 12) vs max adversarial:");
+
+        let mut beaten = 0;
+        let room_types = [RoomType::Entry, RoomType::Pressure, RoomType::Pivot,
+                          RoomType::Setpiece, RoomType::Recovery, RoomType::Climax];
+        for rt in &room_types {
+            let (_, selected) = generate_interesting_room(42, *rt, 12);
+            let win = selected.total >= max_adversarial;
+            if win { beaten += 1; }
+            println!("  {:?}: {:.3} {}", rt, selected.total, if win { "WIN" } else { "LOSE" });
+        }
+        // With 12 candidates, at least 4/6 room types should beat max adversarial
+        assert!(beaten >= 4, "only {beaten}/6 beat max adversarial with 12 candidates");
     }
 
     #[test]

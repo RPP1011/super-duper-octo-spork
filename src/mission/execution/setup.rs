@@ -4,7 +4,7 @@ use crate::ai::core::Team;
 use crate::game_core::{HubScreen, HubUiState, RoomType};
 use crate::mission::{
     enemy_templates::{generate_boss, is_climax_room, BOSS_UNIT_ID},
-    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
+    room_gen::{scoring::generate_interesting_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
     room_sequence::MissionRoomSequence,
     sim_bridge::{
         build_default_sim, EnemyAiState, MissionSimState, PlayerOrderState, PlayerUnitMarker,
@@ -142,7 +142,7 @@ pub(crate) fn mission_enter(
         None => (RoomType::Entry, 4, 4, 42u64, 2u32),
     };
 
-    let layout = generate_room(seed, room_type);
+    let (layout, _score) = generate_interesting_room(seed, room_type, 6);
     spawn_room(&layout, commands, meshes, materials);
 
     let mut sim = if is_climax_room(&room_type) {

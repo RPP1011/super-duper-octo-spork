@@ -396,7 +396,7 @@ pub(crate) fn generate_setpiece_obstacles(nav: &mut NavGrid, rng: &mut Lcg) -> V
     let rows = nav.rows;
     let mid_c = cols / 2;
     let mid_r = rows / 2;
-    let template = rng.next_usize_range(0, 5);
+    let template = rng.next_usize_range(0, 7);
     let mut obs = Vec::new();
     match template {
         0 => {
@@ -574,47 +574,64 @@ pub(crate) fn generate_setpiece_obstacles(nav: &mut NavGrid, rng: &mut Lcg) -> V
                 1.0,
             ));
         }
+        5 => {
+            // "Broken Ruins": asymmetric walls and scattered debris.
+            // One side has heavy cover, the other is exposed — forces
+            // tactical decisions about which flank to push.
+            obs.extend(place_wall_segment(
+                nav, rng, cols / 5, rows / 4, rows / 2, false, 2, 1.8,
+            ));
+            obs.extend(place_l_shape(nav, rng, cols / 5, rows / 4, 4, 1, 0, 1.5));
+            obs.extend(place_cover_cluster(nav, rng, cols / 4, 2 * rows / 3, 3, 3, 1.2));
+            obs.extend(place_cover_cluster(nav, rng, cols / 3, rows / 3, 2, 2, 1.0));
+            // Right side: sparse — only sandbag arcs
+            obs.extend(place_sandbag_arc(nav, rng, 3 * cols / 4, rows / 3, 3, 5, 0.8));
+            obs.extend(place_barricade_line(
+                nav, rng, cols / 2 + 2, 3 * cols / 4, 2 * rows / 3, 3, 2, 1.0,
+            ));
+            // Central elevated platform off-centre
+            obs.extend(place_elevated_platform(
+                nav, rng, mid_c + 2, mid_r - 1, 4, 3, 1.2,
+            ));
+        }
+        6 => {
+            // "Diagonal Split": diagonal wall bisects the room, creating
+            // two distinct zones with different cover characteristics.
+            // Stagger wall segments diagonally from top-left to bottom-right.
+            let steps = 5;
+            for i in 0..steps {
+                let c = cols / 6 + i * (2 * cols / 3) / steps;
+                let r = rows / 6 + i * (2 * rows / 3) / steps;
+                obs.extend(place_wall_segment(
+                    nav, rng, c, r, 3, true, 1, 1.5,
+                ));
+            }
+            // Heavy cover in top-right zone
+            obs.extend(place_l_shape(nav, rng, 3 * cols / 4, rows / 4, 3, 1, 1, 1.5));
+            obs.extend(place_cover_cluster(nav, rng, 2 * cols / 3, rows / 3, 3, 2, 1.0));
+            obs.extend(place_pillar_grid(
+                nav, rng, 3 * cols / 5, rows / 5, 4 * cols / 5, 2 * rows / 5, 4, 1, 1.2,
+            ));
+            // Sparse cover in bottom-left zone — exposed approach
+            obs.extend(place_sandbag_arc(nav, rng, cols / 4, 2 * rows / 3, 2, 4, 0.7));
+            obs.extend(place_barricade_line(
+                nav, rng, cols / 5, cols / 3, 3 * rows / 4, 2, 2, 0.8,
+            ));
+        }
         _ => {
             let wall_len = rows / 3;
             obs.extend(place_wall_segment(
-                nav,
-                rng,
-                cols / 4,
-                rows / 4,
-                wall_len,
-                false,
-                2,
-                1.5,
+                nav, rng, cols / 4, rows / 4, wall_len, false, 2, 1.5,
             ));
             obs.extend(place_wall_segment(
-                nav,
-                rng,
-                cols / 2,
-                rows / 3,
-                wall_len,
-                false,
-                2,
-                1.5,
+                nav, rng, cols / 2, rows / 3, wall_len, false, 2, 1.5,
             ));
             obs.extend(place_wall_segment(
-                nav,
-                rng,
-                3 * cols / 4,
-                rows / 4,
-                wall_len,
-                false,
-                2,
-                1.5,
+                nav, rng, 3 * cols / 4, rows / 4, wall_len, false, 2, 1.5,
             ));
             obs.extend(place_cover_cluster(nav, rng, cols / 3, rows / 2, 3, 2, 1.0));
             obs.extend(place_cover_cluster(
-                nav,
-                rng,
-                2 * cols / 3,
-                rows / 2,
-                3,
-                2,
-                1.0,
+                nav, rng, 2 * cols / 3, rows / 2, 3, 2, 1.0,
             ));
         }
     }
@@ -691,7 +708,7 @@ pub(crate) fn generate_climax_obstacles(nav: &mut NavGrid, rng: &mut Lcg) -> Vec
     let rows = nav.rows;
     let mid_c = cols / 2;
     let mid_r = rows / 2;
-    let template = rng.next_usize_range(0, 4);
+    let template = rng.next_usize_range(0, 6);
     let mut obs = Vec::new();
     match template {
         0 => {
@@ -865,6 +882,56 @@ pub(crate) fn generate_climax_obstacles(nav: &mut NavGrid, rng: &mut Lcg) -> Vec
             ));
             obs.extend(place_sandbag_arc(nav, rng, mid_c, rows / 4, 3, 4, 0.7));
             obs.extend(place_sandbag_arc(nav, rng, mid_c, 3 * rows / 4, 3, 4, 0.7));
+        }
+        4 => {
+            // "Shattered Keep": asymmetric ruin with one intact wing and one
+            // collapsed wing.  Left side has tall walls (intact), right side
+            // has scattered rubble (collapsed).
+            obs.extend(place_wall_segment(
+                nav, rng, cols / 5, rows / 5, rows / 2, false, 2, 2.0,
+            ));
+            obs.extend(place_wall_segment(
+                nav, rng, cols / 5, rows / 5, cols / 3, true, 1, 2.0,
+            ));
+            obs.extend(place_l_shape(nav, rng, cols / 5 + 1, 2 * rows / 5, 4, 1, 0, 1.8));
+            obs.extend(place_elevated_platform(
+                nav, rng, cols / 5 + 2, rows / 5 + 1, 3, 3, 1.0,
+            ));
+            // Right side: scattered rubble from the collapse
+            obs.extend(place_cover_cluster(nav, rng, 3 * cols / 5, rows / 3, 3, 3, 0.8));
+            obs.extend(place_cover_cluster(nav, rng, 2 * cols / 3, rows / 2, 2, 4, 0.6));
+            obs.extend(place_cover_cluster(nav, rng, 3 * cols / 4, 2 * rows / 3, 3, 2, 0.9));
+            obs.extend(place_barricade_line(
+                nav, rng, cols / 2, 3 * cols / 4, 3 * rows / 4, 4, 2, 0.7,
+            ));
+            obs.extend(place_sandbag_arc(nav, rng, 2 * cols / 3, rows / 4, 2, 5, 0.6));
+        }
+        5 => {
+            // "Flanking Gauntlet": heavy central obstacle forces teams around
+            // the sides, with asymmetric cover on each flank.
+            // Centre: impassable block
+            obs.extend(place_wall_segment(
+                nav, rng, mid_c - 2, mid_r - 3, 6, false, 0, 2.0,
+            ));
+            obs.extend(place_wall_segment(
+                nav, rng, mid_c - 2, mid_r - 3, 5, true, 0, 2.0,
+            ));
+            obs.extend(place_wall_segment(
+                nav, rng, mid_c + 2, mid_r - 3, 6, false, 0, 2.0,
+            ));
+            obs.extend(place_elevated_platform(
+                nav, rng, mid_c - 1, mid_r - 2, 3, 4, 1.5,
+            ));
+            // Top flank: dense cover (defender advantage)
+            obs.extend(place_l_shape(nav, rng, cols / 4, rows / 5, 3, 1, 0, 1.5));
+            obs.extend(place_pillar_grid(
+                nav, rng, cols / 3, rows / 6, 2 * cols / 3, rows / 3, 5, 1, 1.2,
+            ));
+            // Bottom flank: open with sparse sandbags (attacker's fast route)
+            obs.extend(place_sandbag_arc(nav, rng, cols / 3, 3 * rows / 4, 2, 4, 0.7));
+            obs.extend(place_barricade_line(
+                nav, rng, cols / 2, 3 * cols / 4, 4 * rows / 5, 2, 2, 0.8,
+            ));
         }
         _ => {
             let wall_len_h = cols / 2;

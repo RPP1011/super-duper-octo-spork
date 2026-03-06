@@ -18,6 +18,7 @@ mod mission_systems;
 mod attention_systems;
 mod save;
 mod migrate;
+pub mod verify;
 
 #[cfg(test)]
 mod tests;

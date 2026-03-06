@@ -58,6 +58,28 @@ pub enum Violation {
     ZoneExpired { zone_id: u32 },
     /// Tether remaining duration is zero but tether still exists.
     TetherExpired { source_id: u32, target_id: u32 },
+
+    // --- Projectile invariants ---
+
+    /// Projectile source unit doesn't exist.
+    ProjectileOrphanedSource { projectile_index: usize, source_id: u32 },
+    /// Projectile position contains NaN or infinity.
+    ProjectileInvalidPosition { projectile_index: usize, x: f32, y: f32 },
+    /// Projectile speed is zero or negative.
+    ProjectileInvalidSpeed { projectile_index: usize, speed: f32 },
+    /// Projectile has traveled past its max distance.
+    ProjectileOvershot { projectile_index: usize, distance_traveled_x100: i32, max_distance_x100: i32 },
+
+    // --- Status effect value-range checks ---
+
+    /// Status effect numeric parameter is outside expected bounds.
+    StatusEffectValueOutOfRange { unit_id: u32, kind: &'static str, value_x1000: i32 },
+    /// Stacks count exceeds max_stacks.
+    StatusEffectStacksExceedMax { unit_id: u32, count: u32, max_stacks: u32 },
+    /// Summon owner doesn't exist in the unit list.
+    SummonOwnerMissing { unit_id: u32, owner_id: u32 },
+    /// Negative armor or magic resist value.
+    NegativeResist { unit_id: u32, field: &'static str, value_x100: i32 },
 }
 
 /// Result of running verification checks on a simulation state.
@@ -185,6 +207,32 @@ pub fn verify_tick(state: &SimState) -> VerificationReport {
         // Directed summon must have an owner
         if unit.directed && unit.owner_id.is_none() {
             violations.push(Violation::DirectedWithoutOwner { unit_id: unit.id });
+        }
+
+        // Summon owner must exist
+        if let Some(owner_id) = unit.owner_id {
+            if !unit_ids.contains(&owner_id) {
+                violations.push(Violation::SummonOwnerMissing {
+                    unit_id: unit.id,
+                    owner_id,
+                });
+            }
+        }
+
+        // Negative armor / magic resist
+        if unit.armor < 0.0 {
+            violations.push(Violation::NegativeResist {
+                unit_id: unit.id,
+                field: "armor",
+                value_x100: (unit.armor * 100.0) as i32,
+            });
+        }
+        if unit.magic_resist < 0.0 {
+            violations.push(Violation::NegativeResist {
+                unit_id: unit.id,
+                field: "magic_resist",
+                value_x100: (unit.magic_resist * 100.0) as i32,
+            });
         }
 
         // Cooldown sanity: remaining should not exceed base
@@ -336,6 +384,74 @@ pub fn verify_tick(state: &SimState) -> VerificationReport {
                             unit_id: unit.id,
                             kind: "Charm",
                             referenced_id: effect.source_id,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // --- Projectile invariants ---
+    for (i, proj) in state.projectiles.iter().enumerate() {
+        if !unit_ids.contains(&proj.source_id) {
+            violations.push(Violation::ProjectileOrphanedSource {
+                projectile_index: i,
+                source_id: proj.source_id,
+            });
+        }
+        if !proj.position.x.is_finite() || !proj.position.y.is_finite() {
+            violations.push(Violation::ProjectileInvalidPosition {
+                projectile_index: i,
+                x: proj.position.x,
+                y: proj.position.y,
+            });
+        }
+        if proj.speed <= 0.0 {
+            violations.push(Violation::ProjectileInvalidSpeed {
+                projectile_index: i,
+                speed: proj.speed,
+            });
+        }
+        if proj.max_travel_distance > 0.0
+            && proj.distance_traveled > proj.max_travel_distance + 1.0
+        {
+            violations.push(Violation::ProjectileOvershot {
+                projectile_index: i,
+                distance_traveled_x100: (proj.distance_traveled * 100.0) as i32,
+                max_distance_x100: (proj.max_travel_distance * 100.0) as i32,
+            });
+        }
+    }
+
+    // --- Status effect value-range checks ---
+    for unit in &state.units {
+        for effect in &unit.status_effects {
+            match &effect.kind {
+                StatusKind::Slow { factor } => {
+                    if *factor < 0.0 || *factor > 1.0 {
+                        violations.push(Violation::StatusEffectValueOutOfRange {
+                            unit_id: unit.id,
+                            kind: "Slow",
+                            value_x1000: (*factor * 1000.0) as i32,
+                        });
+                    }
+                }
+                StatusKind::Blind { miss_chance } => {
+                    if *miss_chance < 0.0 || *miss_chance > 1.0 {
+                        violations.push(Violation::StatusEffectValueOutOfRange {
+                            unit_id: unit.id,
+                            kind: "Blind",
+                            value_x1000: (*miss_chance * 1000.0) as i32,
+                        });
+                    }
+                }
+                StatusKind::Stacks { count, max_stacks, .. } => {
+                    if *max_stacks > 0 && *count > *max_stacks {
+                        violations.push(Violation::StatusEffectStacksExceedMax {
+                            unit_id: unit.id,
+                            count: *count,
+                            max_stacks: *max_stacks,
                         });
                     }
                 }
@@ -648,5 +764,142 @@ mod tests {
         state.units[0].abilities.push(slot);
         let report = verify_tick(&state);
         assert!(report.is_ok(), "Expected no violations, got: {:?}", report.violations);
+    }
+
+    #[test]
+    fn detects_projectile_orphaned_source() {
+        use crate::ai::effects::Projectile;
+        let mut state = sample_duel_state(42);
+        state.projectiles.push(Projectile {
+            source_id: 999,
+            target_id: 2,
+            position: sim_vec2(1.0, 1.0),
+            direction: sim_vec2(1.0, 0.0),
+            speed: 10.0,
+            pierce: false,
+            width: 0.5,
+            on_hit: Vec::new(),
+            on_arrival: Vec::new(),
+            already_hit: Vec::new(),
+            target_position: sim_vec2(5.0, 0.0),
+            max_travel_distance: 0.0,
+            distance_traveled: 0.0,
+        });
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::ProjectileOrphanedSource { projectile_index: 0, source_id: 999 }
+        )));
+    }
+
+    #[test]
+    fn detects_projectile_invalid_position() {
+        use crate::ai::effects::Projectile;
+        let mut state = sample_duel_state(42);
+        state.projectiles.push(Projectile {
+            source_id: 1,
+            target_id: 2,
+            position: sim_vec2(f32::NAN, 0.0),
+            direction: sim_vec2(1.0, 0.0),
+            speed: 10.0,
+            pierce: false,
+            width: 0.5,
+            on_hit: Vec::new(),
+            on_arrival: Vec::new(),
+            already_hit: Vec::new(),
+            target_position: sim_vec2(5.0, 0.0),
+            max_travel_distance: 0.0,
+            distance_traveled: 0.0,
+        });
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::ProjectileInvalidPosition { projectile_index: 0, .. }
+        )));
+    }
+
+    #[test]
+    fn detects_projectile_invalid_speed() {
+        use crate::ai::effects::Projectile;
+        let mut state = sample_duel_state(42);
+        state.projectiles.push(Projectile {
+            source_id: 1,
+            target_id: 2,
+            position: sim_vec2(1.0, 1.0),
+            direction: sim_vec2(1.0, 0.0),
+            speed: 0.0,
+            pierce: false,
+            width: 0.5,
+            on_hit: Vec::new(),
+            on_arrival: Vec::new(),
+            already_hit: Vec::new(),
+            target_position: sim_vec2(5.0, 0.0),
+            max_travel_distance: 0.0,
+            distance_traveled: 0.0,
+        });
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::ProjectileInvalidSpeed { projectile_index: 0, .. }
+        )));
+    }
+
+    #[test]
+    fn detects_slow_factor_out_of_range() {
+        let mut state = sample_duel_state(42);
+        state.units[0].status_effects.push(ActiveStatusEffect {
+            kind: StatusKind::Slow { factor: 1.5 },
+            source_id: 2,
+            remaining_ms: 1000,
+            tags: Default::default(),
+            stacking: Stacking::default(),
+        });
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::StatusEffectValueOutOfRange { unit_id: 1, kind: "Slow", .. }
+        )));
+    }
+
+    #[test]
+    fn detects_stacks_exceed_max() {
+        let mut state = sample_duel_state(42);
+        state.units[0].status_effects.push(ActiveStatusEffect {
+            kind: StatusKind::Stacks { name: "Bleed".into(), count: 10, max_stacks: 5 },
+            source_id: 2,
+            remaining_ms: 1000,
+            tags: Default::default(),
+            stacking: Stacking::default(),
+        });
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::StatusEffectStacksExceedMax { unit_id: 1, count: 10, max_stacks: 5 }
+        )));
+    }
+
+    #[test]
+    fn detects_summon_owner_missing() {
+        let mut state = sample_duel_state(42);
+        state.units[0].owner_id = Some(999);
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::SummonOwnerMissing { unit_id: 1, owner_id: 999 }
+        )));
+    }
+
+    #[test]
+    fn detects_negative_armor() {
+        let mut state = sample_duel_state(42);
+        state.units[0].armor = -10.0;
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::NegativeResist { unit_id: 1, field: "armor", .. }
+        )));
+    }
+
+    #[test]
+    fn detects_negative_magic_resist() {
+        let mut state = sample_duel_state(42);
+        state.units[0].magic_resist = -5.0;
+        let report = verify_tick(&state);
+        assert!(report.violations.iter().any(|v| matches!(v,
+            Violation::NegativeResist { unit_id: 1, field: "magic_resist", .. }
+        )));
     }
 }

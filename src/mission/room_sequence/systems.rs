@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::ai::core::{SimVec2, Team};
 use crate::mission::{
     enemy_templates::{default_enemy_wave, generate_boss, is_climax_room, BOSS_UNIT_ID},
-    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomWall},
+    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
     sim_bridge::{EnemyAiState, MissionOutcome, MissionSimState, PlayerUnitMarker},
     unit_vis::{spawn_unit_visual, UnitVisual},
 };
@@ -99,6 +99,7 @@ pub fn advance_room_system(
     floor_query: Query<Entity, With<RoomFloor>>,
     wall_query: Query<Entity, With<RoomWall>>,
     obstacle_query: Query<Entity, With<RoomObstacle>>,
+    scatter_query: Query<Entity, With<RoomScatter>>,
     unit_vis_query: Query<(Entity, &UnitVisual)>,
     _player_marker_query: Query<Entity, With<PlayerUnitMarker>>,
 ) {
@@ -148,6 +149,9 @@ pub fn advance_room_system(
         commands.entity(entity).despawn_recursive();
     }
     for entity in obstacle_query.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in scatter_query.iter() {
         commands.entity(entity).despawn_recursive();
     }
     commands.entity(door_entity).despawn_recursive();

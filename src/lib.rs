@@ -10,6 +10,7 @@ pub mod mapgen_voronoi;
 pub mod mission;
 pub mod progression;
 pub mod scenario;
+pub mod terrain;
 
 // ---------------------------------------------------------------------------
 // Stub types used by mission::execution that reference the binary crate root.
@@ -36,6 +37,12 @@ pub enum HubScreen {
 #[derive(bevy::prelude::Resource)]
 pub struct HubUiState {
     pub screen: HubScreen,
+}
+
+/// Hub types stub so `crate::hub_types::OverworldTerrainVisual` resolves.
+pub mod hub_types {
+    #[derive(bevy::prelude::Component)]
+    pub struct OverworldTerrainVisual;
 }
 
 /// Camera sub-module stub so `crate::camera::OrbitCameraController` resolves.

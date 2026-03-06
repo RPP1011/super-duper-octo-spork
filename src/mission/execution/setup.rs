@@ -4,7 +4,7 @@ use crate::ai::core::Team;
 use crate::game_core::{HubScreen, HubUiState, RoomType};
 use crate::mission::{
     enemy_templates::{generate_boss, is_climax_room, BOSS_UNIT_ID},
-    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomWall},
+    room_gen::{generate_room, spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall},
     room_sequence::MissionRoomSequence,
     sim_bridge::{
         build_default_sim, EnemyAiState, MissionSimState, PlayerOrderState, PlayerUnitMarker,
@@ -234,6 +234,7 @@ pub(crate) fn mission_exit(
     floor_query: &Query<Entity, With<RoomFloor>>,
     wall_query: &Query<Entity, With<RoomWall>>,
     obstacle_query: &Query<Entity, With<RoomObstacle>>,
+    scatter_query: &Query<Entity, With<RoomScatter>>,
     unit_query: &Query<Entity, With<UnitVisual>>,
 ) {
     for entity in floor_query.iter() {
@@ -243,6 +244,9 @@ pub(crate) fn mission_exit(
         commands.entity(entity).despawn_recursive();
     }
     for entity in obstacle_query.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in scatter_query.iter() {
         commands.entity(entity).despawn_recursive();
     }
     for entity in unit_query.iter() {
@@ -274,6 +278,7 @@ pub fn mission_scene_transition_system(
     floor_query: Query<Entity, With<RoomFloor>>,
     wall_query: Query<Entity, With<RoomWall>>,
     obstacle_query: Query<Entity, With<RoomObstacle>>,
+    scatter_query: Query<Entity, With<RoomScatter>>,
     unit_query: Query<Entity, With<UnitVisual>>,
 ) {
     let current = hub_ui.screen;
@@ -287,7 +292,7 @@ pub fn mission_scene_transition_system(
     let exited_mission = previous == Some(HubScreen::MissionExecution);
 
     if exited_mission {
-        mission_exit(&mut commands, &floor_query, &wall_query, &obstacle_query, &unit_query);
+        mission_exit(&mut commands, &floor_query, &wall_query, &obstacle_query, &scatter_query, &unit_query);
     }
 
     if entered_mission {

@@ -3,17 +3,33 @@ mod nav;
 mod primitives;
 mod templates;
 mod visuals;
+pub(crate) mod environment;
 
+pub use environment::RoomEnvironment;
 pub use nav::{NavGrid, SpawnZone};
-pub use visuals::{spawn_room, RoomFloor, RoomObstacle, RoomWall};
+pub use visuals::{spawn_room, RoomFloor, RoomObstacle, RoomScatter, RoomWall};
 
 use crate::game_core;
+use crate::terrain;
 
 use lcg::{Lcg, ObstacleRegion, RampRegion};
 
 // ---------------------------------------------------------------------------
 // Room layout
 // ---------------------------------------------------------------------------
+
+/// A small environmental detail object (rubble, vine cluster, frost patch, etc.).
+#[derive(Debug, Clone)]
+pub struct ScatterDetail {
+    /// World-space X position.
+    pub x: f32,
+    /// World-space Z position.
+    pub z: f32,
+    /// Scale factor (0.2 .. 0.8 typical).
+    pub scale: f32,
+    /// Height of the detail mesh.
+    pub height: f32,
+}
 
 /// Full description of a procedurally generated room.
 #[derive(Debug, Clone)]
@@ -27,6 +43,16 @@ pub struct RoomLayout {
     pub enemy_spawn: SpawnZone,
     pub room_type: game_core::RoomType,
     pub seed: u64,
+    /// Per-vertex floor heights (subdivided grid, row-major).
+    pub floor_heights: Vec<f32>,
+    /// Number of vertices per side for the floor mesh.
+    pub floor_subdivisions: usize,
+    /// Per-vertex floor colours (RGBA, same count as floor_heights).
+    pub floor_colors: Vec<[f32; 4]>,
+    /// Environmental scatter details (rubble, vines, etc.).
+    pub scatter: Vec<ScatterDetail>,
+    /// Visual environment theme.
+    pub environment: RoomEnvironment,
     // Private geometry caches kept for `spawn_room`.
     pub(crate) obstacles: Vec<ObstacleRegion>,
     pub(crate) ramps: Vec<RampRegion>,
@@ -253,6 +279,102 @@ pub fn generate_room(seed: u64, room_type: game_core::RoomType) -> RoomLayout {
         let player_spawn = build_spawn_zone(&nav, p_lo, p_hi, 1, rows - 2, 6, 8, &mut rng);
         let enemy_spawn = build_spawn_zone(&nav, e_lo, e_hi, 1, rows - 2, 6, 8, &mut rng);
 
+        // --- Environment theme ---
+        let env = RoomEnvironment::from_seed(seed);
+
+        // --- Floor heightmap (subdivided per cell) ---
+        let floor_sub = (cols.max(rows)) + 1; // one vertex per cell edge
+        let floor_verts = floor_sub * floor_sub;
+        let amplitude = env.floor_noise_amplitude();
+        let (base_r, base_g, base_b) = env.floor_color();
+
+        let mut floor_heights = Vec::with_capacity(floor_verts);
+        let mut floor_colors = Vec::with_capacity(floor_verts);
+
+        for vz in 0..floor_sub {
+            for vx in 0..floor_sub {
+                let wx = vx as f32 / floor_sub as f32 * width;
+                let wz = vz as f32 / floor_sub as f32 * depth;
+
+                // Use gradient noise from terrain system for organic floor
+                let h = terrain::sample_gradient_noise(
+                    seed ^ 0xF100_8888,
+                    wx * 0.3,
+                    wz * 0.3,
+                ) * amplitude
+                    + terrain::sample_gradient_noise(
+                        seed ^ 0xF100_9999,
+                        wx * 0.7,
+                        wz * 0.7,
+                    ) * amplitude
+                        * 0.4;
+
+                // Suppress height near obstacles (keep flat where gameplay matters)
+                let cell_c = (vx).min(cols - 1);
+                let cell_r = (vz).min(rows - 1);
+                let nav_idx = cell_r * cols + cell_c;
+                let suppression = if !nav.walkable[nav_idx] { 0.0 } else { 1.0 };
+
+                floor_heights.push(h * suppression);
+
+                // Per-vertex colour: biome-aware with noise variation
+                let color_noise = terrain::sample_value_noise(
+                    seed ^ 0xC0C0_1234,
+                    wx * 0.5,
+                    wz * 0.5,
+                ) * 0.08
+                    - 0.04;
+                // Moisture-like secondary noise for colour variation
+                let moisture = terrain::sample_gradient_noise(
+                    seed ^ 0xC0C0_5678,
+                    wx * 0.2,
+                    wz * 0.2,
+                ) * 0.5
+                    + 0.5;
+                // Blend towards darker/lighter based on moisture
+                let m_shift = (moisture - 0.5) * 0.08;
+                floor_colors.push([
+                    (base_r + color_noise + m_shift).clamp(0.0, 1.0),
+                    (base_g + color_noise - m_shift * 0.5).clamp(0.0, 1.0),
+                    (base_b + color_noise).clamp(0.0, 1.0),
+                    1.0,
+                ]);
+            }
+        }
+
+        // --- Scatter details (environmental debris) ---
+        let area = width * depth;
+        let scatter_count =
+            (area / 100.0 * env.scatter_density()).round() as usize;
+        let mut scatter = Vec::with_capacity(scatter_count);
+        for i in 0..scatter_count {
+            let sx = rng.next_f32() * (width - 2.0) + 1.0;
+            let sz = rng.next_f32() * (depth - 2.0) + 1.0;
+            let sc = (sx as usize).min(cols - 1);
+            let sr = (sz as usize).min(rows - 1);
+            // Only place on walkable cells, away from spawns
+            if !nav.walkable[sr * cols + sc] {
+                continue;
+            }
+            // Noise-gated placement for organic clustering
+            let placement_noise = terrain::sample_value_noise(
+                seed ^ 0x5CA7_0000 ^ (i as u64),
+                sx * 0.6,
+                sz * 0.6,
+            );
+            if placement_noise < 0.4 {
+                continue;
+            }
+            let scale = rng.next_f32_range(0.2, 0.7);
+            let height = rng.next_f32_range(0.08, 0.35);
+            scatter.push(ScatterDetail {
+                x: sx,
+                z: sz,
+                scale,
+                height,
+            });
+        }
+
         return RoomLayout {
             width,
             depth,
@@ -261,6 +383,11 @@ pub fn generate_room(seed: u64, room_type: game_core::RoomType) -> RoomLayout {
             enemy_spawn,
             room_type,
             seed,
+            floor_heights,
+            floor_subdivisions: floor_sub,
+            floor_colors,
+            scatter,
+            environment: env,
             obstacles,
             ramps,
         };

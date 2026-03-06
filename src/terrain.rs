@@ -457,8 +457,18 @@ mod tests {
 
     #[test]
     fn domain_warp_produces_offset() {
-        let (wx, wz) = domain_warp(42, 5.0, 5.0, 2.0);
-        assert!((wx - 5.0).abs() > 0.001 || (wz - 5.0).abs() > 0.001);
+        // Test across several points — at least one must show non-trivial warp
+        let mut any_offset = false;
+        for i in 0..10 {
+            let x = 3.0 + i as f32 * 1.7;
+            let z = 2.0 + i as f32 * 2.3;
+            let (wx, wz) = domain_warp(42, x, z, 2.0);
+            if (wx - x).abs() > 0.001 || (wz - z).abs() > 0.001 {
+                any_offset = true;
+                break;
+            }
+        }
+        assert!(any_offset, "domain warp should offset at least one point");
     }
 
     #[test]

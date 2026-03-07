@@ -25,3 +25,6 @@ hnsw_rs = "0.3.3"
 image = "0.25"
 rayon = "1.10"
 winnow = "0.7"
+
+[dev-dependencies]
+proptest = "1.6"

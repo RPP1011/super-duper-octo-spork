@@ -23,6 +23,8 @@ pub mod lower;
 pub mod parser;
 
 #[cfg(test)]
+mod fuzz;
+#[cfg(test)]
 mod tests;
 
 use crate::ai::effects::defs::{AbilityDef, PassiveDef};

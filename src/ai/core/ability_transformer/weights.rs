@@ -625,21 +625,14 @@ impl AbilityTransformerWeights {
         })
     }
 
-    /// Run forward inference.
+    /// Encode ability tokens into a [CLS] embedding.
     ///
-    /// * `token_ids` — token IDs (with [CLS] at position 0)
-    /// * `game_state` — optional game state features
-    ///
-    /// Returns urgency ∈ [0, 1] and target logits.
-    pub fn predict(
-        &self,
-        token_ids: &[u32],
-        game_state: Option<&[f32]>,
-    ) -> TransformerOutput {
+    /// This is **static per ability** — token sequences never change during
+    /// a fight. Cache the result at fight init and reuse every tick.
+    pub fn encode_cls(&self, token_ids: &[u32]) -> Vec<f32> {
         let d = self.d_model;
         let seq_len = token_ids.len().min(self.max_seq_len);
 
-        // 1. Embed tokens + positions
         let mut seq = vec![0.0f32; seq_len * d];
         let mut mask = vec![false; seq_len];
 
@@ -652,43 +645,65 @@ impl AbilityTransformerWeights {
             }
         }
 
-        // 2. Transformer layers
         for layer in &self.layers {
             layer.forward(&mut seq, seq_len, &mask);
         }
 
-        // 3. Output layer norm on [CLS] position (index 0)
         let mut cls = vec![0.0f32; d];
         cls.copy_from_slice(&seq[0..d]);
         self.out_norm.forward(&mut cls);
+        cls
+    }
 
-        // 4. Cross-attention with game state entities
-        let head_input = if let (Some(enc), Some(ca), Some(gs)) =
-            (&self.entity_encoder, &self.cross_attn, game_state)
-        {
-            let (entity_tokens, entity_mask) = enc.forward(gs);
-            ca.forward(&cls, &entity_tokens, &entity_mask, NUM_ENTITIES)
+    /// Predict from a cached [CLS] embedding and precomputed entity tokens.
+    ///
+    /// This is the **hot path** — runs every tick per ability. Only
+    /// cross-attention + decision head, no transformer encoder.
+    pub fn predict_from_cls(
+        &self,
+        cls: &[f32],
+        entities: Option<&EncodedEntities>,
+    ) -> TransformerOutput {
+        let d = self.d_model;
+
+        // Cross-attention with entity tokens
+        let head_input = if let (Some(ca), Some(ent)) = (&self.cross_attn, entities) {
+            ca.forward(cls, &ent.tokens, &ent.mask, NUM_ENTITIES)
         } else {
-            cls
+            cls.to_vec()
         };
 
-        // 5. Decision head: urgency
+        // Decision heads
         let mut u_hidden = vec![0.0f32; self.urgency_l1.out_dim];
         self.urgency_l1.forward_gelu(&head_input, &mut u_hidden);
         let mut u_out = vec![0.0f32; 1];
         self.urgency_l2.forward(&u_hidden, &mut u_out);
-        let urgency = sigmoid(u_out[0]);
 
-        // 6. Decision head: target
         let mut t_hidden = vec![0.0f32; self.target_l1.out_dim];
         self.target_l1.forward_gelu(&head_input, &mut t_hidden);
         let mut target_logits = vec![0.0f32; self.n_targets];
         self.target_l2.forward(&t_hidden, &mut target_logits);
 
         TransformerOutput {
-            urgency,
+            urgency: sigmoid(u_out[0]),
             target_logits,
         }
+    }
+
+    /// Run full forward inference (convenience, no caching).
+    ///
+    /// * `token_ids` — token IDs (with [CLS] at position 0)
+    /// * `game_state` — optional game state features
+    ///
+    /// Returns urgency ∈ [0, 1] and target logits.
+    pub fn predict(
+        &self,
+        token_ids: &[u32],
+        game_state: Option<&[f32]>,
+    ) -> TransformerOutput {
+        let cls = self.encode_cls(token_ids);
+        let entities = game_state.and_then(|gs| self.encode_entities(gs));
+        self.predict_from_cls(&cls, entities.as_ref())
     }
 
     /// Convenience: get the argmax target index.
@@ -703,6 +718,75 @@ impl AbilityTransformerWeights {
             .unwrap_or(0);
         (out.urgency, best)
     }
+
+    // -----------------------------------------------------------------------
+    // Batch API: precompute entity tokens once, evaluate multiple abilities
+    // -----------------------------------------------------------------------
+
+    /// Pre-computed entity encoding for a single unit's game state.
+    /// Reusable across all ability evaluations for that unit.
+    pub fn encode_entities(&self, game_state: &[f32]) -> Option<EncodedEntities> {
+        let enc = self.entity_encoder.as_ref()?;
+        let (tokens, mask) = enc.forward(game_state);
+        Some(EncodedEntities { tokens, mask })
+    }
+
+    /// Evaluate a single ability using precomputed entity tokens.
+    ///
+    /// Avoids redundant entity encoder calls when evaluating
+    /// multiple abilities for the same unit.
+    pub fn predict_with_entities(
+        &self,
+        token_ids: &[u32],
+        entities: Option<&EncodedEntities>,
+    ) -> TransformerOutput {
+        let cls = self.encode_cls(token_ids);
+        self.predict_from_cls(&cls, entities)
+    }
+
+    /// Evaluate all abilities for a single unit at once.
+    ///
+    /// Computes entity encoding once, then evaluates each ability against it.
+    pub fn predict_batch(
+        &self,
+        abilities: &[&[u32]],
+        game_state: Option<&[f32]>,
+    ) -> Vec<TransformerOutput> {
+        let entities = game_state.and_then(|gs| self.encode_entities(gs));
+        abilities
+            .iter()
+            .map(|tokens| self.predict_with_entities(tokens, entities.as_ref()))
+            .collect()
+    }
+
+    /// Evaluate all abilities from cached [CLS] embeddings.
+    ///
+    /// **Optimal per-tick path.** Cache [CLS] embeddings at fight init
+    /// with `encode_cls()`, then call this every tick. Only runs
+    /// entity encoder (once) + cross-attention + decision head per ability.
+    ///
+    /// For 4 heroes × 8 abilities: 4 entity encoder calls + 32 cross-attn calls.
+    /// No transformer encoder calls at all during the fight.
+    pub fn predict_batch_cached(
+        &self,
+        cached_cls: &[&[f32]],
+        game_state: Option<&[f32]>,
+    ) -> Vec<TransformerOutput> {
+        let entities = game_state.and_then(|gs| self.encode_entities(gs));
+        cached_cls
+            .iter()
+            .map(|cls| self.predict_from_cls(cls, entities.as_ref()))
+            .collect()
+    }
+}
+
+/// Pre-computed entity encoding, reusable across ability evaluations.
+#[derive(Debug, Clone)]
+pub struct EncodedEntities {
+    /// Flat entity tokens: [NUM_ENTITIES × d_model]
+    pub tokens: Vec<f32>,
+    /// Entity existence mask: [NUM_ENTITIES], true = entity exists
+    pub mask: Vec<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -840,6 +924,42 @@ mod tests {
             out.urgency
         );
         assert_eq!(out.target_logits.len(), 3);
+    }
+
+    #[test]
+    fn test_batch_api_matches_single() {
+        let json_path = "generated/ability_transformer_weights_xattn.json";
+        if !std::path::Path::new(json_path).exists() {
+            eprintln!("Skipping: {json_path} not found");
+            return;
+        }
+        let json_str = std::fs::read_to_string(json_path).unwrap();
+        let model = match AbilityTransformerWeights::from_json(&json_str) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Skipping: parse error (needs re-export): {e}");
+                return;
+            }
+        };
+
+        let tokens: Vec<u32> = vec![1, 1, 18, 5, 8, 185, 14, 83, 15, 155];
+        let tokens2: Vec<u32> = vec![1, 1, 63, 14, 249, 15, 38, 14, 248, 96];
+
+        let mut gs = vec![0.0f32; 210];
+        gs[0] = 1.0; gs[29] = 1.0;
+        gs[30] = 0.5; gs[59] = 1.0;
+
+        // Single predict
+        let out1 = model.predict(&tokens, Some(&gs));
+        let out2 = model.predict(&tokens2, Some(&gs));
+
+        // Batch predict
+        let batch = model.predict_batch(&[&tokens, &tokens2], Some(&gs));
+        assert_eq!(batch.len(), 2);
+        assert!((batch[0].urgency - out1.urgency).abs() < 1e-6,
+            "batch[0] urgency mismatch: {} vs {}", batch[0].urgency, out1.urgency);
+        assert!((batch[1].urgency - out2.urgency).abs() < 1e-6,
+            "batch[1] urgency mismatch: {} vs {}", batch[1].urgency, out2.urgency);
     }
 
     #[test]

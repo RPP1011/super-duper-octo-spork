@@ -67,6 +67,12 @@ pub fn check_passive_triggers(
             (Trigger::OnStackReached { ref name, count: threshold }, Trigger::OnStackReached { name: ref fired_name, count: fired_count }) => {
                 name == fired_name && fired_count >= threshold
             }
+            // --- Phase 10: New Triggers ---
+            (Trigger::OnCrowdControlApplied, Trigger::OnCrowdControlApplied) => true,
+            (Trigger::OnResourceBelow { percent: threshold }, Trigger::OnResourceBelow { percent: current_pct }) => {
+                current_pct <= threshold
+            }
+            (Trigger::OnSpellShieldConsumed, Trigger::OnSpellShieldConsumed) => true,
             _ => false,
         };
 

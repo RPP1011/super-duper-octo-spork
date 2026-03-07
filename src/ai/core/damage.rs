@@ -133,13 +133,30 @@ pub fn apply_typed_damage(
         damage = (damage as f32 * elev_factor.clamp(0.5, 1.3)) as i32;
     }
 
-    // DamageModify on target
+    // DamageModify on target (with optional damage_type filter)
     let damage_mod_factor: f32 = state.units[target_idx].status_effects.iter()
         .filter_map(|s| {
-            if let StatusKind::DamageModify { factor } = s.kind { Some(factor) } else { None }
+            if let StatusKind::DamageModify { factor, damage_type: dt_filter } = &s.kind {
+                // Apply if no filter, or filter matches the incoming damage type
+                if dt_filter.is_none() || *dt_filter == Some(damage_type) {
+                    Some(*factor)
+                } else {
+                    None
+                }
+            } else { None }
         })
         .fold(1.0f32, |acc, f| acc * f);
     damage = (damage as f32 * damage_mod_factor) as i32;
+
+    // DamageReduction on target (flat % reduction, stacks multiplicatively)
+    if damage_type != DamageType::True {
+        let damage_reduction: f32 = state.units[target_idx].status_effects.iter()
+            .filter_map(|s| {
+                if let StatusKind::DamageReduction { percent } = s.kind { Some(percent) } else { None }
+            })
+            .fold(1.0f32, |acc, p| acc * (1.0 - p / 100.0));
+        damage = (damage as f32 * damage_reduction) as i32;
+    }
 
     // Redirect check
     let redirect_info: Option<(usize, u32)> = state.units[target_idx].status_effects.iter()
@@ -279,7 +296,25 @@ pub fn apply_typed_damage(
     }
 
     if new_hp == 0 {
-        events.push(SimEvent::UnitDied { tick, unit_id: target_id });
+        // ReviveOnDeath check — auto-revive if the unit has this status
+        let revive_info = state.units[target_idx].status_effects.iter()
+            .enumerate()
+            .find_map(|(i, s)| {
+                if let StatusKind::ReviveOnDeath { hp_percent } = s.kind {
+                    Some((i, hp_percent))
+                } else { None }
+            });
+        if let Some((se_idx, hp_pct)) = revive_info {
+            let max_hp = state.units[target_idx].max_hp;
+            let revive_hp = (max_hp as f32 * hp_pct / 100.0).max(1.0) as i32;
+            state.units[target_idx].hp = revive_hp;
+            state.units[target_idx].status_effects.remove(se_idx);
+            state.units[target_idx].control_remaining_ms = 0;
+            state.units[target_idx].casting = None;
+            events.push(SimEvent::UnitResurrected { tick, unit_id: target_id });
+        } else {
+            events.push(SimEvent::UnitDied { tick, unit_id: target_id });
+        }
     }
 
     let shield_broke = shield_before > 0 && state.units[target_idx].shield_hp == 0;

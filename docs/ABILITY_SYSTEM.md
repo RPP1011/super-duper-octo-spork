@@ -8,11 +8,11 @@ Complete reference for the data-driven ability engine, the LoL champion dataset,
 
 1. [System Architecture](#system-architecture)
 2. [Hero TOML Format](#hero-toml-format)
-3. [Effect Types (52)](#effect-types)
+3. [Effect Types (58)](#effect-types)
 4. [Area Shapes (7)](#area-shapes)
 5. [Delivery Methods (7)](#delivery-methods)
-6. [Conditions (24)](#conditions)
-7. [Passive Triggers (20)](#passive-triggers)
+6. [Conditions (30)](#conditions)
+7. [Passive Triggers (23)](#passive-triggers)
 8. [Targeting Modes (8)](#targeting-modes)
 9. [Damage Types](#damage-types)
 10. [Status Effects](#status-effects)
@@ -33,7 +33,7 @@ WHAT (Effect) x WHERE (Area) x HOW (Delivery) x WHEN (Condition/Trigger) + Tags
 
 | File | Purpose |
 |------|---------|
-| `src/ai/effects/effect_enum.rs` | `Effect` enum with all 45 variants and serde defaults |
+| `src/ai/effects/effect_enum.rs` | `Effect` enum with all 58 variants and serde defaults |
 | `src/ai/effects/types.rs` | Area, Delivery, Condition, Trigger enums; `ConditionalEffect` wrapper; `DamageType`; `Stacking` |
 | `src/ai/effects/defs.rs` | `AbilityDef`, `PassiveDef`, `AbilitySlot`, `PassiveSlot`, `HeroToml`, `AbilityTargeting`, `StatusKind`, `ActiveStatusEffect`, `Projectile`, `AbilityTarget` |
 | `src/ai/core/apply_effect.rs` | Main effect dispatcher (handles all effect types) |
@@ -641,13 +641,34 @@ Most previously identified gaps have been implemented. Remaining gaps are limite
 | Grounded effect | `Effect::Grounded`, `StatusKind::Grounded` |
 | Directed summons | `directed` flag on `Effect::Summon` + `Effect::CommandSummons` |
 | %HP damage | `scaling_stat` supports `"target_max_hp"` and `"target_missing_hp"` |
+| Compound conditions | `And`, `Or`, `Not` compound conditions for complex logic |
+| Composable scaling | `ScalingTerm` system with `bonus` array on `Damage`/`Heal`/`Shield` effects |
+| Chance / else effects | `chance` and `else_effects` on `ConditionalEffect` for probabilistic branching |
+| Distance/resource conditions | `TargetDistanceBelow`, `CasterResourceBelow`, etc. |
+| DamagePerStack scaling | `DamagePerStack` via `ScalingTerm` with `stat = "target_stacks"` |
+| Cooldown reset | `Effect::CooldownReset` — reset named ability cooldown (or all) |
+| Resource restore | `Effect::ResourceRestore` — restore mana/energy to target |
+| Damage reduction | `Effect::DamageReduction` — flat % damage reduction for duration (Alistar R) |
+| Spell shield | `Effect::SpellShield` — block next incoming CC/ability (Sivir E, Banshee's) |
+| Tenacity | `Effect::Tenacity` — reduce incoming CC durations by % (Mercury Treads) |
+| Revive on death | `Effect::ReviveOnDeath` — auto-resurrect on death (Guardian Angel, Aatrox R) |
+| Type-specific damage amp | `DamageModify` now supports optional `damage_type` filter (amp only physical/magic) |
+| Shield stat scaling | `Shield` now supports `bonus: Vec<ScalingTerm>` for stat-based shields |
+| Armor/MR scaling | New `StatRef` variants: `CasterArmor`, `CasterMagicResist`, `TargetArmor`, `TargetMagicResist` |
+| Count-based scaling | New `StatRef` variants: `AllyCount`, `EnemyCount` |
+| Caster stack conditions | `CasterStackCount` condition — check caster's own stacks |
+| CC detection | `TargetIsCrowdControlled` condition — true if target has any CC |
+| CC trigger | `OnCrowdControlApplied` passive trigger |
+| Resource trigger | `OnResourceBelow` passive trigger |
+| Spell shield trigger | `OnSpellShieldConsumed` passive trigger |
 
 ### Remaining Gaps
 
 | Mechanic | Impact | Notes |
 |----------|--------|-------|
 | Pet AI | Low | Directed summons cover most cases; fully autonomous pet AI (Tibbers, Daisy) would need separate intent generation |
-| Ability combos / Marks | Low | Some champions (Akali, Zed) apply marks then detonate. Partially expressible via `apply_stacks` + `detonate` but exact mark-target tracking is limited. |
+| Ability combos / Marks | Low | Some champions (Akali, Zed) apply marks then detonate. Expressible via `apply_stacks` + `target_stack_count` condition + `detonate` but exact mark-target tracking is limited |
+| Aura mechanics | Low | Constant-radius passive effects (Sunfire Cape). Approximated by `Periodic` trigger + area effects |
 
 ---
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{ConditionalEffect, DamageType, ScalingTerm};
 
 // ---------------------------------------------------------------------------
-// WHAT — Effect types (52 total)
+// WHAT — Effect types (58 total)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +53,9 @@ pub enum Effect {
     Shield {
         amount: i32,
         duration_ms: u32,
+        /// Composable scaling terms for shield amount.
+        #[serde(default)]
+        bonus: Vec<ScalingTerm>,
     },
     Stun {
         duration_ms: u32,
@@ -145,6 +148,9 @@ pub enum Effect {
     DamageModify {
         factor: f32,
         duration_ms: u32,
+        /// If set, only modify damage of this type (otherwise all damage).
+        #[serde(default)]
+        damage_type: Option<DamageType>,
     },
     SelfDamage {
         amount: i32,
@@ -288,6 +294,38 @@ pub enum Effect {
         ability_index: usize,
     },
 
+    // --- Phase 10: LoL Coverage Expansion ---
+
+    /// Reset the cooldown of a named ability (or all abilities if `ability_name` is None).
+    CooldownReset {
+        #[serde(default)]
+        ability_name: Option<String>,
+    },
+    /// Restore resource (mana/energy) to the target.
+    ResourceRestore {
+        amount: i32,
+    },
+    /// Reduce all incoming damage by a flat percentage for a duration.
+    DamageReduction {
+        percent: f32,
+        duration_ms: u32,
+    },
+    /// Block the next incoming ability/spell (Sivir E, Nocturne W, Banshee's Veil).
+    SpellShield {
+        duration_ms: u32,
+    },
+    /// Reduce the duration of incoming CC effects by a percentage.
+    Tenacity {
+        percent: f32,
+        duration_ms: u32,
+    },
+    /// On death, automatically revive with a percentage of max HP.
+    /// Only triggers once per `cooldown_ms` window.
+    ReviveOnDeath {
+        hp_percent: f32,
+        #[serde(default)]
+        cooldown_ms: u32,
+    },
 }
 
 fn default_summon_count() -> u32 {

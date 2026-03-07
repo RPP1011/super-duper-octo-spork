@@ -40,10 +40,10 @@ pub fn apply_effect_extended(
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: "Lifesteal".to_string() });
             }
         }
-        Effect::DamageModify { factor, duration_ms } => {
+        Effect::DamageModify { factor, duration_ms, damage_type } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::DamageModify { factor: *factor },
+                    kind: StatusKind::DamageModify { factor: *factor, damage_type: *damage_type },
                     source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
                 });
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: format!("DamageModify:{}", factor) });
@@ -419,6 +419,87 @@ pub fn apply_effect_extended(
             for idx in summon_indices {
                 // Instant reposition (like Azir Q — soldiers dash to location)
                 state.units[idx].position = target_pos;
+            }
+        }
+
+        // --- Phase 10: LoL Coverage Expansion ---
+
+        Effect::CooldownReset { ref ability_name } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                for slot in &mut state.units[tidx].abilities {
+                    if let Some(ref name) = ability_name {
+                        if slot.def.name != *name { continue; }
+                    }
+                    slot.cooldown_remaining_ms = 0;
+                    if slot.def.max_charges > 0 {
+                        slot.charges = slot.def.max_charges;
+                    }
+                }
+                events.push(SimEvent::StatusEffectApplied {
+                    tick, unit_id: target_id,
+                    effect_name: format!("CooldownReset:{}", ability_name.as_deref().unwrap_or("all")),
+                });
+            }
+        }
+
+        Effect::ResourceRestore { amount } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                let max_r = state.units[tidx].max_resource;
+                if max_r > 0 {
+                    state.units[tidx].resource = (state.units[tidx].resource + amount).min(max_r);
+                    events.push(SimEvent::StatusEffectApplied {
+                        tick, unit_id: target_id,
+                        effect_name: format!("ResourceRestore:{}", amount),
+                    });
+                }
+            }
+        }
+
+        Effect::DamageReduction { percent, duration_ms } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                state.units[tidx].status_effects.push(ActiveStatusEffect {
+                    kind: StatusKind::DamageReduction { percent: *percent },
+                    source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                });
+                events.push(SimEvent::StatusEffectApplied {
+                    tick, unit_id: target_id, effect_name: "DamageReduction".to_string(),
+                });
+            }
+        }
+
+        Effect::SpellShield { duration_ms } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                state.units[tidx].status_effects.push(ActiveStatusEffect {
+                    kind: StatusKind::SpellShield,
+                    source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                });
+                events.push(SimEvent::StatusEffectApplied {
+                    tick, unit_id: target_id, effect_name: "SpellShield".to_string(),
+                });
+            }
+        }
+
+        Effect::Tenacity { percent, duration_ms } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                state.units[tidx].status_effects.push(ActiveStatusEffect {
+                    kind: StatusKind::Tenacity { percent: *percent },
+                    source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                });
+                events.push(SimEvent::StatusEffectApplied {
+                    tick, unit_id: target_id, effect_name: "Tenacity".to_string(),
+                });
+            }
+        }
+
+        Effect::ReviveOnDeath { hp_percent, cooldown_ms: _ } => {
+            if let Some(tidx) = find_unit_idx(state, target_id) {
+                state.units[tidx].status_effects.push(ActiveStatusEffect {
+                    kind: StatusKind::ReviveOnDeath { hp_percent: *hp_percent },
+                    source_id: caster_id, remaining_ms: u32::MAX, tags: tags.clone(), stacking,
+                });
+                events.push(SimEvent::StatusEffectApplied {
+                    tick, unit_id: target_id, effect_name: "ReviveOnDeath".to_string(),
+                });
             }
         }
 

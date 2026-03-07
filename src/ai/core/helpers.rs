@@ -150,6 +150,12 @@ pub fn unit_has_status(unit: &UnitState, name: &str) -> bool {
         (StatusKind::Dot { .. }, "dot") => true,
         (StatusKind::Hot { .. }, "hot") => true,
         (StatusKind::Stacks { .. }, "stacks") => true,
+        (StatusKind::DamageReduction { .. }, "damage_reduction") => true,
+        (StatusKind::SpellShield, "spell_shield") => true,
+        (StatusKind::Tenacity { .. }, "tenacity") => true,
+        (StatusKind::ReviveOnDeath { .. }, "revive_on_death") => true,
+        (StatusKind::Suppress, "suppress") => true,
+        (StatusKind::Grounded, "grounded") => true,
         _ => false,
     })
 }
@@ -243,6 +249,36 @@ fn resolve_stat_ref(stat: &StatRef, caster_idx: usize, target_id: u32, state: &S
                 })
                 .unwrap_or(0.0)
         }
+        StatRef::CasterArmor => state.units[caster_idx].armor,
+        StatRef::CasterMagicResist => state.units[caster_idx].magic_resist,
+        StatRef::TargetArmor => {
+            find_unit_idx(state, target_id).map_or(0.0, |i| state.units[i].armor)
+        }
+        StatRef::TargetMagicResist => {
+            find_unit_idx(state, target_id).map_or(0.0, |i| state.units[i].magic_resist)
+        }
+        StatRef::AllyCount => {
+            let team = state.units[caster_idx].team;
+            state.units.iter().filter(|u| u.hp > 0 && u.team == team).count() as f32
+        }
+        StatRef::EnemyCount => {
+            let team = state.units[caster_idx].team;
+            state.units.iter().filter(|u| u.hp > 0 && u.team != team).count() as f32
+        }
+    }
+}
+
+/// Apply tenacity to a CC duration: reduced by the highest tenacity % on the target.
+pub fn apply_tenacity(duration_ms: u32, target_idx: usize, state: &SimState) -> u32 {
+    let max_tenacity: f32 = state.units[target_idx].status_effects.iter()
+        .filter_map(|s| {
+            if let StatusKind::Tenacity { percent } = s.kind { Some(percent) } else { None }
+        })
+        .fold(0.0f32, f32::max);
+    if max_tenacity > 0.0 {
+        (duration_ms as f32 * (1.0 - max_tenacity / 100.0)).max(0.0) as u32
+    } else {
+        duration_ms
     }
 }
 

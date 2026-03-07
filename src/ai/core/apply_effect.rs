@@ -56,6 +56,22 @@ pub fn apply_effect(
                 return;
             }
         }
+
+        // SpellShield check — consume spell shield on hostile ability effects
+        let is_hostile = !effect_type_name.is_empty() && effect_type_name != "damage";
+        if is_hostile {
+            let has_spell_shield = state.units[tidx].status_effects.iter().any(|s|
+                matches!(s.kind, StatusKind::SpellShield)
+            );
+            if has_spell_shield {
+                state.units[tidx].status_effects.retain(|s| !matches!(s.kind, StatusKind::SpellShield));
+                events.push(SimEvent::EffectResisted {
+                    tick, unit_id: target_id,
+                    resisted_tag: "spell_shield".to_string(),
+                });
+                return;
+            }
+        }
     }
 
     if !apply_effect_primary(effect, caster_idx, caster_id, target_id, ability_target, tick, tags, stacking, state, events) {
@@ -135,40 +151,44 @@ fn apply_effect_primary(
                 }
             }
         }
-        Effect::Shield { amount, duration_ms } => {
+        Effect::Shield { amount, duration_ms, ref bonus } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
-                state.units[tidx].shield_hp += amount;
+                let bonus_amount = resolve_bonus(bonus, caster_idx, target_id, state);
+                let total = *amount + bonus_amount;
+                state.units[tidx].shield_hp += total;
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::Shield { amount: *amount },
+                    kind: StatusKind::Shield { amount: total },
                     source_id: caster_id,
                     remaining_ms: *duration_ms,
                     tags: tags.clone(),
                     stacking,
                 });
-                events.push(SimEvent::ShieldApplied { tick, unit_id: target_id, amount: *amount });
+                events.push(SimEvent::ShieldApplied { tick, unit_id: target_id, amount: total });
             }
         }
         Effect::Stun { duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 state.units[tidx].control_remaining_ms =
-                    state.units[tidx].control_remaining_ms.max(*duration_ms);
+                    state.units[tidx].control_remaining_ms.max(dur);
                 state.units[tidx].casting = None;
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
                     kind: StatusKind::Stun,
                     source_id: caster_id,
-                    remaining_ms: *duration_ms,
+                    remaining_ms: dur,
                     tags: tags.clone(),
                     stacking,
                 });
-                events.push(SimEvent::ControlApplied { tick, source_id: caster_id, target_id, duration_ms: *duration_ms });
+                events.push(SimEvent::ControlApplied { tick, source_id: caster_id, target_id, duration_ms: dur });
             }
         }
         Effect::Slow { factor, duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
                     kind: StatusKind::Slow { factor: *factor },
                     source_id: caster_id,
-                    remaining_ms: *duration_ms,
+                    remaining_ms: dur,
                     tags: tags.clone(),
                     stacking,
                 });
@@ -313,7 +333,7 @@ fn apply_effect_primary(
                             | StatusKind::Fear { .. } | StatusKind::Blind { .. }
                             | StatusKind::Polymorph | StatusKind::Confuse
                             | StatusKind::DeathMark { .. } => true,
-                            StatusKind::DamageModify { factor } => *factor > 1.0,
+                            StatusKind::DamageModify { factor, .. } => *factor > 1.0,
                             _ => false,
                         };
                         if is_negative { removed += 1; false } else { true }
@@ -332,34 +352,38 @@ fn apply_effect_primary(
         }
         Effect::Root { duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::Root, source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                    kind: StatusKind::Root, source_id: caster_id, remaining_ms: dur, tags: tags.clone(), stacking,
                 });
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: "Root".to_string() });
             }
         }
         Effect::Silence { duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::Silence, source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                    kind: StatusKind::Silence, source_id: caster_id, remaining_ms: dur, tags: tags.clone(), stacking,
                 });
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: "Silence".to_string() });
             }
         }
         Effect::Fear { duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 let source_pos = state.units[caster_idx].position;
                 state.units[tidx].casting = None;
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::Fear { source_pos }, source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                    kind: StatusKind::Fear { source_pos }, source_id: caster_id, remaining_ms: dur, tags: tags.clone(), stacking,
                 });
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: "Fear".to_string() });
             }
         }
         Effect::Taunt { duration_ms } => {
             if let Some(tidx) = find_unit_idx(state, target_id) {
+                let dur = apply_tenacity(*duration_ms, tidx, state);
                 state.units[tidx].status_effects.push(ActiveStatusEffect {
-                    kind: StatusKind::Taunt { taunter_id: caster_id }, source_id: caster_id, remaining_ms: *duration_ms, tags: tags.clone(), stacking,
+                    kind: StatusKind::Taunt { taunter_id: caster_id }, source_id: caster_id, remaining_ms: dur, tags: tags.clone(), stacking,
                 });
                 events.push(SimEvent::StatusEffectApplied { tick, unit_id: target_id, effect_name: "Taunt".to_string() });
             }

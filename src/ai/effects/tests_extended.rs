@@ -7,9 +7,10 @@ factor = 0.75
 duration_ms = 6000"#;
     let effect: Effect = toml::from_str(toml_str).unwrap();
     match effect {
-        Effect::DamageModify { factor, duration_ms } => {
+        Effect::DamageModify { factor, duration_ms, damage_type } => {
             assert!((factor - 0.75).abs() < 0.01);
             assert_eq!(duration_ms, 6000);
+            assert!(damage_type.is_none()); // No type filter by default
         }
         _ => panic!("expected DamageModify"),
     }

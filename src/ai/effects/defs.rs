@@ -231,7 +231,7 @@ pub enum StatusKind {
     // --- Phase 3: Damage Modifiers ---
     Reflect { percent: f32 },
     Lifesteal { percent: f32 },
-    DamageModify { factor: f32 },
+    DamageModify { factor: f32, damage_type: Option<DamageType> },
     Blind { miss_chance: f32 },
     OnHitBuff { effects: Vec<ConditionalEffect> },
 
@@ -262,6 +262,16 @@ pub enum StatusKind {
     Suppress,
     Grounded,
     Attached { host_id: u32 },
+
+    // --- Phase 10: LoL Coverage Expansion ---
+    /// Flat % damage reduction on all incoming damage.
+    DamageReduction { percent: f32 },
+    /// Blocks the next incoming ability/spell, then expires.
+    SpellShield,
+    /// Reduces CC duration by a percentage.
+    Tenacity { percent: f32 },
+    /// Auto-revive on death (Guardian Angel / Aatrox R).
+    ReviveOnDeath { hp_percent: f32 },
 }
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,8 @@ damage        — amount (instant), OR amount_per_tick + tick_interval_ms + dura
                 Optional: scaling_stat (string), scaling_percent (f32) for HP-scaling
 heal          — amount (instant), OR amount_per_tick + tick_interval_ms + duration_ms (HoT)
                 Optional: scaling_stat (string), scaling_percent (f32) for HP-scaling
-shield        — amount (i32), duration_ms (u32)
+shield        — amount (i32), duration_ms (u32), bonus (list of ScalingTerm, optional)
+                Optional: bonus = [{stat = "caster_armor", percent = 50.0}] for stat-scaling shields
 self_damage   — amount (i32): deal damage to caster
 ```
 
@@ -57,9 +58,16 @@ debuff        — stat (string), factor (f32), duration_ms
 reflect       — percent (f32), duration_ms: reflect % of incoming damage
 lifesteal     — percent (f32), duration_ms: heal for % of damage dealt
 damage_modify — factor (f32), duration_ms: multiply incoming damage (>1 = amp, <1 = reduce)
+                Optional: damage_type ("physical"/"magic"/"true") to only modify that type
 on_hit_buff   — duration_ms: next attack applies stored effects to target
 immunity      — immune_to (list of strings), duration_ms: block specific effect types
 stealth       — duration_ms, break_on_damage (bool), break_on_ability (bool)
+damage_reduction — percent (f32), duration_ms: flat % reduction on all incoming damage (Alistar R)
+spell_shield  — duration_ms: blocks the next incoming CC/ability effect (Sivir E, Banshee's)
+tenacity      — percent (f32), duration_ms: reduce incoming CC durations by % (Mercury Treads)
+cooldown_reset — ability_name (string, optional): reset cooldown of named ability (or all if omitted)
+resource_restore — amount (i32): restore resource (mana/energy) to target
+revive_on_death — hp_percent (f32), cooldown_ms (u32, optional): auto-revive on death (Guardian Angel)
 ```
 
 #### Advanced Damage
@@ -102,10 +110,23 @@ cooldown_modify — amount_ms (i32), ability_name (string, optional): adjust abi
                   If ability_name is set, only affects that specific ability
 ```
 
-#### Scaling Stats (for `scaling_stat` on damage/heal)
+#### Scaling Stats (for `scaling_stat` on damage/heal, or `stat` in `ScalingTerm`)
 ```
-"caster_current_hp", "caster_missing_hp", "caster_max_hp"
+"caster_current_hp", "caster_missing_hp", "caster_max_hp", "caster_attack_damage"
+"caster_armor", "caster_magic_resist"
 "target_current_hp", "target_missing_hp", "target_max_hp"
+"target_armor", "target_magic_resist"
+"target_stacks" (requires name), "caster_stacks" (requires name)
+"ally_count", "enemy_count"
+```
+
+#### Composable Scaling Terms (`bonus` on Damage/Heal/Shield)
+```toml
+[[abilities.effects.bonus]]
+stat = "caster_max_hp"     # StatRef variant
+percent = 8.0              # contributes 8% of caster's max HP
+max = 50                   # optional cap (0 = uncapped)
+consume = false            # optional: consume referenced stacks after reading
 ```
 
 ### Buff/Debuff Stat Names
@@ -195,6 +216,20 @@ type = "caster_buff_count"    — min_count (u32)
 type = "ally_count_below"     — count (u32)
 type = "enemy_count_below"    — count (u32)
 type = "target_stack_count"   — name (string), min_count (u32): check named stacks on target
+type = "caster_stack_count"   — name (string), min_count (u32): check named stacks on caster
+type = "target_is_crowd_controlled" — true if target has any CC (stun/root/silence/fear/etc.)
+type = "caster_has_spell_shield" — true if caster has active spell shield
+type = "target_distance_below" — range (f32): caster-to-target distance < range
+type = "target_distance_above" — range (f32): caster-to-target distance > range
+type = "caster_resource_below" — percent (f32): caster resource below %
+type = "caster_resource_above" — percent (f32): caster resource above %
+```
+
+#### Compound Conditions
+```
+type = "and"  — conditions (list): ALL sub-conditions must be true
+type = "or"   — conditions (list): ANY sub-condition must be true
+type = "not"  — condition (object): inverts the inner condition
 ```
 
 ### Triggers (passives only, `[passives.trigger]` section)
@@ -220,6 +255,9 @@ type = "on_reflect"
 type = "on_ally_killed"      — range (f32)
 type = "on_auto_attack"
 type = "on_stack_reached"    — name (string), count (u32): fires when named stacks reach count
+type = "on_crowd_control_applied" — fires when any CC is applied to the unit
+type = "on_resource_below"  — percent (f32): fires when resource drops below %
+type = "on_spell_shield_consumed" — fires when a spell shield blocks an ability
 ```
 
 ### Stacking (`stacking` field on effects)

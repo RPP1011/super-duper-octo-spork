@@ -30,6 +30,18 @@ pub enum StatRef {
     TargetStacks { name: String },
     /// Number of stacks with the given name on the caster.
     CasterStacks { name: String },
+    /// Caster's armor stat.
+    CasterArmor,
+    /// Caster's magic resist stat.
+    CasterMagicResist,
+    /// Target's armor stat.
+    TargetArmor,
+    /// Target's magic resist stat.
+    TargetMagicResist,
+    /// Number of alive allies (same team as caster).
+    AllyCount,
+    /// Number of alive enemies (different team from caster).
+    EnemyCount,
 }
 
 /// One additive scaling term: contributes `percent`% of `stat` to an effect's amount.
@@ -235,6 +247,14 @@ pub enum Condition {
     CasterResourceBelow { percent: f32 },
     /// True if caster's resource is above `percent`% of max.
     CasterResourceAbove { percent: f32 },
+
+    // --- Phase 10: New Conditions ---
+    /// True if caster has at least `min_count` stacks of named type.
+    CasterStackCount { name: String, min_count: u32 },
+    /// True if target is under any crowd control effect.
+    TargetIsCrowdControlled,
+    /// True if caster has a spell shield active.
+    CasterHasSpellShield,
 }
 
 impl Default for Condition {
@@ -276,6 +296,15 @@ pub enum Trigger {
         name: String,
         count: u32,
     },
+    // --- Phase 10: New Triggers ---
+    /// Fires when any crowd control is applied to the unit.
+    OnCrowdControlApplied,
+    /// Fires when resource drops below a percentage of max.
+    OnResourceBelow {
+        percent: f32,
+    },
+    /// Fires when a spell shield blocks an ability.
+    OnSpellShieldConsumed,
 }
 
 fn default_trigger_range() -> f32 {

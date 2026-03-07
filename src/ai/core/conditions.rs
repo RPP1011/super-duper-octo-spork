@@ -115,7 +115,7 @@ pub fn evaluate_condition(
                     let count = t.status_effects.iter().filter(|s| match &s.kind {
                         StatusKind::Debuff { .. } | StatusKind::Slow { .. } | StatusKind::Dot { .. }
                         | StatusKind::Blind { .. } => true,
-                        StatusKind::DamageModify { factor } => *factor > 1.0,
+                        StatusKind::DamageModify { factor, .. } => *factor > 1.0,
                         _ => false,
                     }).count() as u32;
                     return count >= *min_count;
@@ -192,6 +192,32 @@ pub fn evaluate_condition(
             } else {
                 false
             }
+        }
+        // --- Phase 10: New Conditions ---
+        Condition::CasterStackCount { ref name, min_count } => {
+            state.units[caster_idx].status_effects.iter().any(|s| {
+                matches!(&s.kind, StatusKind::Stacks { name: n, count, .. } if n == name && *count >= *min_count)
+            })
+        }
+        Condition::TargetIsCrowdControlled => {
+            if let AbilityTarget::Unit(tid) = target {
+                if let Some(t) = state.units.iter().find(|u| u.id == tid) {
+                    return t.control_remaining_ms > 0
+                        || t.status_effects.iter().any(|s| matches!(s.kind,
+                            StatusKind::Stun | StatusKind::Root | StatusKind::Silence
+                            | StatusKind::Fear { .. } | StatusKind::Taunt { .. }
+                            | StatusKind::Polymorph | StatusKind::Banish
+                            | StatusKind::Charm { .. } | StatusKind::Suppress
+                            | StatusKind::Slow { .. }
+                        ));
+                }
+            }
+            false
+        }
+        Condition::CasterHasSpellShield => {
+            state.units[caster_idx].status_effects.iter().any(|s|
+                matches!(s.kind, StatusKind::SpellShield)
+            )
         }
     }
 }

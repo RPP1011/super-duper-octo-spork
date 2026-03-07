@@ -106,6 +106,13 @@ SPECIAL MECHANICS (now supported):
   "evolves"               -> evolve_into
   "creates a clone"       -> Summon { clone: true }
   "commands soldiers"     -> Summon { directed: true } + CommandSummons
+  "resets cooldown"       -> CooldownReset { ability_name }
+  "restores mana/energy"  -> ResourceRestore { amount }
+  "reduces damage taken"  -> DamageReduction { percent, duration_ms }
+  "spell shield"          -> SpellShield { duration_ms }
+  "tenacity/CC reduction" -> Tenacity { percent, duration_ms }
+  "revives on death"      -> ReviveOnDeath { hp_percent }
+  "only amps phys/magic"  -> DamageModify { damage_type: "physical" }
 
 AI_HINT:
   Primary damage ability      -> "damage"

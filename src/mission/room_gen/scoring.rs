@@ -175,10 +175,14 @@ pub fn asymmetry(nav_grid: &NavGrid) -> f32 {
 /// Chokepoint count: tactical decision points where geometry forces choices.
 ///
 /// A chokepoint cell has exactly 2 walkable cardinal neighbors (narrow passage).
+/// We also penalise **regularity** — periodic chokepoint placement (like a
+/// zigzag or uniform grid) gets a discount because it's visually monotonous.
+/// The regularity penalty uses nearest-neighbor distance (NND) variance:
+/// low NND variance → evenly spaced → boring, high variance → organic.
 pub fn chokepoint_density(nav_grid: &NavGrid) -> f32 {
     let cols = nav_grid.cols;
     let rows = nav_grid.rows;
-    let mut chokepoints = 0usize;
+    let mut chokepoint_positions: Vec<(usize, usize)> = Vec::new();
     let mut walkable_count = 0usize;
 
     for r in 1..rows - 1 {
@@ -202,7 +206,7 @@ pub fn chokepoint_density(nav_grid: &NavGrid) -> f32 {
                 }
             }
             if walkable_neighbors == 2 {
-                chokepoints += 1;
+                chokepoint_positions.push((c, r));
             }
         }
     }
@@ -211,9 +215,44 @@ pub fn chokepoint_density(nav_grid: &NavGrid) -> f32 {
         return 0.0;
     }
 
+    let chokepoints = chokepoint_positions.len();
     let density = chokepoints as f32 / walkable_count as f32;
-    // Sweet spot: 3-12% chokepoint density.
-    (density / 0.08).min(1.0)
+    // Bell-curve scoring: sweet spot is 3-12% chokepoint density.
+    // Below 3%: too few chokepoints (open/boring).
+    // Above 12%: too many chokepoints (maze/zigzag — monotonous).
+    let density_score = if density < 0.03 {
+        density / 0.03 // ramp up to sweet spot
+    } else if density <= 0.12 {
+        1.0 // peak: interesting range
+    } else {
+        // Decay above 12%, reaching 0.2 at 30%+
+        (1.0 - (density - 0.12) / 0.25 * 0.8).max(0.2)
+    };
+
+    // --- Spatial clustering bonus ---
+    // Reward chokepoints that are spread across the room rather than
+    // concentrated in one band.  Measure how many quadrants contain
+    // at least one chokepoint.
+    let spread_bonus = if chokepoints >= 4 {
+        let mid_c = cols / 2;
+        let mid_r = rows / 2;
+        let mut quadrants = [false; 4];
+        for &(c, r) in &chokepoint_positions {
+            let qi = if c < mid_c { 0 } else { 1 } + if r < mid_r { 0 } else { 2 };
+            quadrants[qi] = true;
+        }
+        let filled = quadrants.iter().filter(|&&q| q).count();
+        // 4 quadrants = +0.1, 3 = +0.05, 2 or fewer = 0
+        match filled {
+            4 => 0.10,
+            3 => 0.05,
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
+
+    (density_score + spread_bonus).clamp(0.0, 1.0)
 }
 
 /// LoS fragmentation: how many sampled positions can see across the room?

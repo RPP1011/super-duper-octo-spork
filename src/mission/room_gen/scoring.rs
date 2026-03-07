@@ -560,7 +560,31 @@ mod tests {
         adversarial_layout(nav, cols, rows)
     }
 
-    /// Variant 6: "Symmetric Arena" — perfectly mirrored obstacles (what
+    /// Variant 6: "Checkerboard Ramp" — alternating blocked cells on a
+    /// linear elevation gradient.  Tries to max out elevation_drama, cover,
+    /// and chokepoints simultaneously while being perfectly uniform.
+    fn build_adversarial_checkerboard_ramp() -> RoomLayout {
+        let (cols, rows) = (24, 24);
+        let (mut nav, _, _) = adversarial_shell(cols, rows);
+        // Checkerboard: block every other interior cell
+        for r in 2..rows - 2 {
+            for c in 2..cols - 2 {
+                if (r + c) % 2 == 0 {
+                    nav.set_walkable_rect(c, r, c, r, false);
+                }
+            }
+        }
+        // Linear ramp from left (0.0) to right (1.5m)
+        for r in 0..rows {
+            for c in 0..cols {
+                let elevation = (c as f32 / cols as f32) * 1.5;
+                nav.elevation[r * cols + c] = elevation;
+            }
+        }
+        adversarial_layout(nav, cols, rows)
+    }
+
+    /// Variant 7: "Symmetric Arena" — perfectly mirrored obstacles (what
     /// Setpiece/Climax templates often produce).
     fn build_adversarial_symmetric_arena() -> RoomLayout {
         let (cols, rows) = (30, 30);
@@ -592,6 +616,7 @@ mod tests {
             ("Uniform Grid", build_adversarial_uniform_grid()),
             ("Maze", build_adversarial_maze()),
             ("Spiky Zigzag", build_adversarial_spiky_zigzag()),
+            ("Checker Ramp", build_adversarial_checkerboard_ramp()),
             ("Symmetric Arena", build_adversarial_symmetric_arena()),
         ];
 
@@ -658,6 +683,7 @@ mod tests {
             ("Uniform Grid", build_adversarial_uniform_grid()),
             ("Maze", build_adversarial_maze()),
             ("Spiky Zigzag", build_adversarial_spiky_zigzag()),
+            ("Checker Ramp", build_adversarial_checkerboard_ramp()),
             ("Symmetric Arena", build_adversarial_symmetric_arena()),
         ];
 

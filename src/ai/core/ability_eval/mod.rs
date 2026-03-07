@@ -7,6 +7,7 @@
 mod categories;
 mod features;
 mod features_aoe;
+mod game_state;
 mod oracle_scoring;
 mod weights;
 mod eval;
@@ -18,6 +19,8 @@ pub use categories::*;
 pub use features::*;
 #[allow(unused_imports)]
 pub use features_aoe::*;
+#[allow(unused_imports)]
+pub use game_state::*;
 #[allow(unused_imports)]
 pub use oracle_scoring::*;
 #[allow(unused_imports)]

@@ -1704,10 +1704,396 @@ ability Transform {
     }
 
     // -----------------------------------------------------------------------
-    // Dataset generator — 10k diverse abilities written to disk
+    // Realistic parameter strategies — calibrated from real hero data
     // -----------------------------------------------------------------------
 
-    /// Generate 10k abilities across multiple strategies/seeds and write to
+    /// Cooldowns: 3–30s, weighted toward 5–12s (matches hero template median)
+    fn realistic_cooldown() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => (3u32..8).prop_map(|s| format!("{s}s")),      // short: 3–7s
+            4 => (8u32..15).prop_map(|s| format!("{s}s")),     // medium: 8–14s
+            2 => (15u32..30).prop_map(|s| format!("{s}s")),    // long: 15–29s
+            1 => (30u32..60).prop_map(|s| format!("{s}s")),    // ultimate: 30–59s
+        ]
+    }
+
+    /// Cast times: most are instant or short
+    fn realistic_cast() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => Just("0ms".to_string()),                       // instant
+            3 => (100u32..500).prop_map(|ms| format!("{ms}ms")), // short: 100–499ms
+            2 => (500u32..1500).prop_map(|ms| format!("{ms}ms")),// medium: 500ms–1.5s
+            1 => (2u32..4).prop_map(|s| format!("{s}s")),       // long: 2–3s
+        ]
+    }
+
+    /// Effect durations (cc, buff, shield): 0.5–8s, weighted toward 1–4s
+    fn realistic_effect_duration() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => (300u32..1000).prop_map(|ms| format!("{ms}ms")),// brief: 0.3–1s
+            4 => (1u32..4).prop_map(|s| format!("{s}s")),       // standard: 1–3s
+            2 => (4u32..8).prop_map(|s| format!("{s}s")),       // long: 4–7s
+            1 => (8u32..15).prop_map(|s| format!("{s}s")),      // very long: 8–14s
+        ]
+    }
+
+    /// Ranges: 1–8, matching real hero data (most at 3–6)
+    fn realistic_range() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => (1u32..3).prop_map(|r| format!("{r}.0")),     // melee: 1–2
+            4 => (3u32..7).prop_map(|r| format!("{r}.0")),     // standard: 3–6
+            2 => (7u32..10).prop_map(|r| format!("{r}.0")),    // long: 7–9
+        ]
+    }
+
+    /// Damage amounts: 15–80, matching real hero data
+    fn realistic_damage() -> impl Strategy<Value = String> {
+        (15i32..80).prop_map(|d| d.to_string())
+    }
+
+    /// Heal amounts: 15–60
+    fn realistic_heal() -> impl Strategy<Value = String> {
+        (15i32..60).prop_map(|d| d.to_string())
+    }
+
+    /// Shield amounts: 20–60
+    fn realistic_shield() -> impl Strategy<Value = String> {
+        (20i32..60).prop_map(|d| d.to_string())
+    }
+
+    /// Area shapes with realistic radii
+    fn realistic_area() -> impl Strategy<Value = String> {
+        prop_oneof![
+            (2u32..6).prop_map(|r| format!("in circle({r}.0)")),
+            (3u32..6, 30u32..120).prop_map(|(r, a)| format!("in cone({r}.0, {a}.0)")),
+            (3u32..8, 1u32..3).prop_map(|(l, w)| format!("in line({l}.0, {w}.0)")),
+            (1u32..3, 3u32..7).prop_map(|(i, o)| format!("in ring({i}.0, {o}.0)")),
+            (2u32..5, 2u32..5).prop_map(|(r, t)| format!("in spread({r}.0, {t})")),
+        ]
+    }
+
+    fn realistic_opt_area() -> impl Strategy<Value = String> {
+        prop_oneof![3 => Just(String::new()), 1 => realistic_area()]
+    }
+
+    // -----------------------------------------------------------------------
+    // Archetype-based ability generators — hint-coherent effect selection
+    // -----------------------------------------------------------------------
+
+    /// Damage archetype: primary damage + optional secondary (slow, scaling, area)
+    fn damage_archetype_effects() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Pure damage
+            (realistic_damage(), opt_tags()).prop_map(|(d, tags)|
+                format!("    damage {d} {tags}")),
+            // Damage + area
+            (realistic_damage(), realistic_area(), opt_tags()).prop_map(|(d, area, tags)|
+                format!("    damage {d} {area} {tags}")),
+            // Damage + slow
+            (realistic_damage(), 2u32..6, realistic_effect_duration(), opt_tags())
+                .prop_map(|(d, slow10, dur, tags)| {
+                    let slow = slow10 as f32 / 10.0;
+                    format!("    damage {d} {tags}\n    slow {slow} for {dur}")
+                }),
+            // Damage + scaling
+            (realistic_damage(), 5u32..30, scaling_stat(), opt_tags())
+                .prop_map(|(d, pct, stat, tags)|
+                    format!("    damage {d} + {pct}% {stat} {tags}")),
+            // Damage + knockback
+            (realistic_damage(), 2u32..5, opt_tags()).prop_map(|(d, kb, tags)|
+                format!("    damage {d} {tags}\n    knockback {kb}.0")),
+        ]
+    }
+
+    /// Heal archetype: heal + optional shield/buff
+    fn heal_archetype_effects() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Pure heal
+            realistic_heal().prop_map(|h| format!("    heal {h}")),
+            // Heal + area
+            (realistic_heal(), realistic_area()).prop_map(|(h, area)|
+                format!("    heal {h} {area}")),
+            // Heal + shield
+            (realistic_heal(), realistic_shield(), realistic_effect_duration())
+                .prop_map(|(h, s, dur)|
+                    format!("    heal {h}\n    shield {s} for {dur}")),
+            // Heal + buff
+            (realistic_heal(), 1u32..4, realistic_effect_duration()).prop_map(|(h, f10, dur)| {
+                let f = f10 as f32 / 10.0;
+                format!("    heal {h}\n    buff move_speed {f} for {dur}")
+            }),
+            // Conditional heal
+            (realistic_heal(), simple_condition()).prop_map(|(h, cond)|
+                format!("    heal {h} when {cond}")),
+        ]
+    }
+
+    /// CC archetype: primary cc + optional secondary
+    fn cc_archetype_effects() -> impl Strategy<Value = String> {
+        let cc_type = prop_oneof![
+            3 => Just("stun"), 3 => Just("root"), 2 => Just("silence"),
+            1 => Just("fear"), 1 => Just("taunt"),
+        ];
+        prop_oneof![
+            // Pure CC
+            (cc_type.clone(), realistic_effect_duration()).prop_map(|(cc, dur)|
+                format!("    {cc} {dur}")),
+            // CC + area
+            (cc_type.clone(), realistic_effect_duration(), realistic_area())
+                .prop_map(|(cc, dur, area)|
+                    format!("    {cc} {dur} {area}")),
+            // CC + damage
+            (cc_type.clone(), realistic_effect_duration(), realistic_damage())
+                .prop_map(|(cc, dur, d)|
+                    format!("    {cc} {dur}\n    damage {d}")),
+            // Slow + damage
+            (2u32..6, realistic_effect_duration(), realistic_damage(), realistic_opt_area())
+                .prop_map(|(slow10, dur, d, area)| {
+                    let slow = slow10 as f32 / 10.0;
+                    format!("    slow {slow} for {dur} {area}\n    damage {d}")
+                }),
+        ]
+    }
+
+    /// Buff/utility archetype: buff/debuff + optional secondary
+    fn buff_archetype_effects() -> impl Strategy<Value = String> {
+        let buff_stat = prop_oneof![
+            Just("move_speed"), Just("attack_speed"),
+            Just("damage_output"), Just("cooldown_reduction"),
+        ];
+        prop_oneof![
+            // Pure buff
+            (buff_stat.clone(), 1u32..5, realistic_effect_duration())
+                .prop_map(|(s, f10, dur)| {
+                    let f = f10 as f32 / 10.0;
+                    format!("    buff {s} {f} for {dur}")
+                }),
+            // Buff + shield
+            (buff_stat.clone(), 1u32..5, realistic_effect_duration(), realistic_shield(), realistic_effect_duration())
+                .prop_map(|(s, f10, dur, sh, sh_dur)| {
+                    let f = f10 as f32 / 10.0;
+                    format!("    buff {s} {f} for {dur}\n    shield {sh} for {sh_dur}")
+                }),
+            // Buff area
+            (buff_stat.clone(), 1u32..4, realistic_effect_duration(), realistic_area())
+                .prop_map(|(s, f10, dur, area)| {
+                    let f = f10 as f32 / 10.0;
+                    format!("    buff {s} {f} for {dur} {area}")
+                }),
+            // Damage modify
+            (10u32..20, realistic_effect_duration()).prop_map(|(f10, dur)| {
+                let f = f10 as f32 / 10.0;
+                format!("    damage_modify {f} for {dur}")
+            }),
+            // Lifesteal
+            (2u32..5, realistic_effect_duration()).prop_map(|(f10, dur)| {
+                let f = f10 as f32 / 10.0;
+                format!("    lifesteal {f} for {dur}")
+            }),
+        ]
+    }
+
+    /// Defense archetype: shield/stealth/reflect
+    fn defense_archetype_effects() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Shield
+            (realistic_shield(), realistic_effect_duration()).prop_map(|(s, dur)|
+                format!("    shield {s} for {dur}")),
+            // Shield + heal
+            (realistic_shield(), realistic_effect_duration(), realistic_heal())
+                .prop_map(|(s, dur, h)|
+                    format!("    shield {s} for {dur}\n    heal {h}")),
+            // Reflect
+            (2u32..6, realistic_effect_duration()).prop_map(|(f10, dur)| {
+                let f = f10 as f32 / 10.0;
+                format!("    reflect {f} for {dur}")
+            }),
+            // Stealth
+            realistic_effect_duration().prop_map(|dur|
+                format!("    stealth for {dur} break_on_damage")),
+            // Shield + buff
+            (realistic_shield(), realistic_effect_duration(), 1u32..4, realistic_effect_duration())
+                .prop_map(|(s, s_dur, f10, b_dur)| {
+                    let f = f10 as f32 / 10.0;
+                    format!("    shield {s} for {s_dur}\n    buff armor {f} for {b_dur}")
+                }),
+        ]
+    }
+
+    /// Utility archetype: dash/blink/swap/misc
+    fn utility_archetype_effects() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Dash
+            Just("    dash to_target".to_string()),
+            Just("    dash to_position".to_string()),
+            (2u32..6).prop_map(|d| format!("    blink {d}.0")),
+            // Dash + buff
+            (2u32..4, realistic_effect_duration()).prop_map(|(f10, dur)| {
+                let f = f10 as f32 / 10.0;
+                format!("    dash to_target\n    buff move_speed {f} for {dur}")
+            }),
+            // Swap
+            Just("    swap".to_string()),
+            // Dispel
+            Just("    dispel".to_string()),
+        ]
+    }
+
+    /// Pick archetype effects matching the given hint.
+    fn archetype_effects(hint: &'static str) -> proptest::strategy::BoxedStrategy<String> {
+        match hint {
+            "damage" => damage_archetype_effects().boxed(),
+            "heal" => heal_archetype_effects().boxed(),
+            "crowd_control" => cc_archetype_effects().boxed(),
+            "buff" => buff_archetype_effects().boxed(),
+            "defense" => defense_archetype_effects().boxed(),
+            "utility" => utility_archetype_effects().boxed(),
+            _ => damage_archetype_effects().boxed(),
+        }
+    }
+
+    /// Realistic delivery with sane parameters
+    fn realistic_delivery() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Projectile
+            3 => (5u32..15, proptest::bool::ANY, effect_list(1, 2))
+                .prop_map(|(speed, pierce, effects)| {
+                    let pierce_str = if pierce { ", pierce" } else { "" };
+                    format!(
+                        "    deliver projectile {{ speed: {speed}.0{pierce_str} }} {{\n        on_hit {{\n{effects}\n        }}\n    }}"
+                    )
+                }),
+            // Chain
+            1 => (2u32..5, (3u32..6).prop_map(|r| format!("{r}.0")), effect_list(1, 2))
+                .prop_map(|(bounces, range, effects)|
+                    format!(
+                        "    deliver chain {{ bounces: {bounces}, range: {range} }} {{\n        on_hit {{\n{effects}\n        }}\n    }}"
+                    )
+                ),
+            // Zone
+            2 => ((3u32..10).prop_map(|s| format!("{s}s")), (500u32..2000).prop_map(|ms| format!("{ms}ms")), effect_list(1, 2))
+                .prop_map(|(dur, tick, effects)|
+                    format!(
+                        "    deliver zone {{ duration: {dur}, tick: {tick} }} {{\n        on_hit {{\n{effects}\n        }}\n    }}"
+                    )
+                ),
+            // Channel
+            1 => ((2u32..5).prop_map(|s| format!("{s}s")), (300u32..1000).prop_map(|ms| format!("{ms}ms")), effect_list(1, 2))
+                .prop_map(|(dur, tick, effects)|
+                    format!(
+                        "    deliver channel {{ duration: {dur}, tick: {tick} }} {{\n        on_hit {{\n{effects}\n        }}\n    }}"
+                    )
+                ),
+            // Tether
+            1 => ((3u32..7).prop_map(|r| format!("{r}.0")), effect_list(1, 2))
+                .prop_map(|(range, effects)|
+                    format!(
+                        "    deliver tether {{ max_range: {range} }} {{\n        on_complete {{\n{effects}\n        }}\n    }}"
+                    )
+                ),
+            // Trap
+            1 => ((5u32..15).prop_map(|s| format!("{s}s")), (1u32..3).prop_map(|r| format!("{r}.0")), effect_list(1, 2))
+                .prop_map(|(dur, radius, effects)|
+                    format!(
+                        "    deliver trap {{ duration: {dur}, trigger_radius: {radius} }} {{\n        on_hit {{\n{effects}\n        }}\n    }}"
+                    )
+                ),
+        ]
+    }
+
+    /// Coherent ability: archetype-driven, realistic parameters, hint-matched effects.
+    fn coherent_ability() -> impl Strategy<Value = String> {
+        // Pick hint first, then build coherent ability around it
+        prop_oneof![
+            4 => Just("damage"),
+            2 => Just("heal"),
+            2 => Just("crowd_control"),
+            2 => Just("buff"),
+            2 => Just("defense"),
+            1 => Just("utility"),
+        ]
+        .prop_flat_map(|hint| {
+            (
+                ident_strategy(),
+                // Targeting coherent with hint
+                match hint {
+                    "heal" => prop_oneof![3 => Just("ally"), 1 => Just("self"), 1 => Just("self_aoe")].boxed(),
+                    "buff" | "defense" => prop_oneof![2 => Just("self"), 2 => Just("ally"), 1 => Just("self_aoe")].boxed(),
+                    "utility" => prop_oneof![Just("self"), Just("enemy"), Just("ground")].boxed(),
+                    _ => prop_oneof![3 => Just("enemy"), 1 => Just("ground"), 1 => Just("direction")].boxed(),
+                },
+                realistic_range(),
+                realistic_cooldown(),
+                realistic_cast(),
+                Just(hint),
+                // Optional cost (30% chance)
+                proptest::option::weighted(0.3, 5u32..25),
+                // Optional charges (20% chance)
+                proptest::option::weighted(0.2, (1u32..4, (5u32..15).prop_map(|s| format!("{s}s")))),
+                // Optional recast (15% chance)
+                proptest::option::weighted(0.15, (1u32..3, (2u32..5).prop_map(|s| format!("{s}s")))),
+                // Effects: archetype-driven, optionally with delivery
+                prop_oneof![
+                    3 => archetype_effects(hint).prop_map(|e| (e, None)),
+                    2 => (archetype_effects(hint), realistic_delivery().prop_map(Some))
+                        .prop_map(|(e, d)| (e, d)),
+                ],
+            )
+                .prop_map(
+                    |(name, target, range, cd, cast, hint, cost, charges, recast, (effects, delivery))| {
+                        let mut lines = vec![format!("ability {name} {{")];
+                        lines.push(format!("    target: {target}, range: {range}"));
+                        lines.push(format!("    cooldown: {cd}, cast: {cast}"));
+                        lines.push(format!("    hint: {hint}"));
+
+                        if let Some(c) = cost {
+                            lines.push(format!("    cost: {c}"));
+                        }
+                        if let Some((ch, rech)) = charges {
+                            lines.push(format!("    charges: {ch}"));
+                            lines.push(format!("    recharge: {rech}"));
+                        }
+                        if let Some((rc, rw)) = recast {
+                            lines.push(format!("    recast: {rc}"));
+                            lines.push(format!("    recast_window: {rw}"));
+                        }
+
+                        lines.push(String::new());
+
+                        if let Some(del) = delivery {
+                            lines.push(del);
+                        }
+                        if !effects.is_empty() {
+                            lines.push(effects);
+                        }
+
+                        lines.push("}".to_string());
+                        lines.join("\n")
+                    },
+                )
+        })
+    }
+
+    /// Realistic passive with sane parameters
+    fn realistic_passive() -> impl Strategy<Value = String> {
+        (
+            ident_strategy(),
+            trigger_strategy(),
+            realistic_cooldown(),
+            effect_list(1, 2),
+        )
+            .prop_map(|(name, trigger, cd, effects)| {
+                format!(
+                    "passive {name} {{\n    trigger: {trigger}\n    cooldown: {cd}\n\n{effects}\n}}"
+                )
+            })
+    }
+
+    // -----------------------------------------------------------------------
+    // Dataset generator — 75k diverse abilities written to disk
+    // -----------------------------------------------------------------------
+
+    /// Generate 75k abilities across multiple strategies/seeds and write to
     /// `generated/ability_dataset/`. Each ability is a separate .ability file.
     /// Run with: cargo test generate_ability_dataset -- --ignored --nocapture
     #[test]
@@ -1725,11 +2111,10 @@ ability Transform {
         }
         fs::create_dir_all(out_dir).unwrap();
 
-        let mut all_dsl: Vec<String> = Vec::with_capacity(11000);
+        let mut all_dsl: Vec<String> = Vec::with_capacity(80_000);
         let mut seen_names: HashSet<String> = HashSet::new();
 
         fn make_seed(n: u64) -> [u8; 32] {
-            let bytes = n.to_le_bytes();
             let mut seed = [0u8; 32];
             for (i, chunk) in seed.chunks_exact_mut(8).enumerate() {
                 let val = n.wrapping_add(i as u64);
@@ -1745,42 +2130,58 @@ ability Transform {
             ))
         }
 
-        // --- Normal abilities: 16 seeds × 250 = 4000 ---
-        let batches_per_seed = 250;
-        for seed in 0..16u64 {
+        // Mix: 60K coherent (80%) + 10K normal (13%) + 5K complex (7%)
+        // This gives the model mostly realistic abilities to learn from,
+        // with enough variety to cover the full grammar.
+
+        // --- Coherent abilities: 240 seeds × 250 = 60,000 ---
+        let batch = 250;
+        for seed in 0..240u64 {
             let mut runner = make_runner(seed);
-            let strat = proptest::collection::vec(ability_block(), batches_per_seed..=batches_per_seed);
+            let strat = proptest::collection::vec(coherent_ability(), batch..=batch);
             let tree = strat.new_tree(&mut runner).unwrap();
             all_dsl.extend(tree.current());
         }
-        eprintln!("Generated {} normal abilities", all_dsl.len());
+        eprintln!("Generated {} coherent abilities", all_dsl.len());
 
-        // --- Abominations: 12 seeds × 250 = 3000 ---
+        // --- Normal abilities (unrestricted params): 40 seeds × 250 = 10,000 ---
+        let normal_start = all_dsl.len();
+        for seed in 0..40u64 {
+            let mut runner = make_runner(seed + 1000);
+            let strat = proptest::collection::vec(ability_block(), batch..=batch);
+            let tree = strat.new_tree(&mut runner).unwrap();
+            all_dsl.extend(tree.current());
+        }
+        eprintln!("Generated {} normal abilities", all_dsl.len() - normal_start);
+
+        // --- Complex (abominations): 12 seeds × 250 = 3,000 ---
         let abom_start = all_dsl.len();
         for seed in 0..12u64 {
-            let mut runner = make_runner(seed + 100);
-            let strat = proptest::collection::vec(abomination_block(), batches_per_seed..=batches_per_seed);
+            let mut runner = make_runner(seed + 2000);
+            let strat = proptest::collection::vec(abomination_block(), batch..=batch);
             let tree = strat.new_tree(&mut runner).unwrap();
             all_dsl.extend(tree.current());
         }
         eprintln!("Generated {} abomination abilities", all_dsl.len() - abom_start);
 
-        // --- God abilities: 12 seeds × 250 = 3000 ---
+        // --- God abilities: 8 seeds × 250 = 2,000 ---
         let god_start = all_dsl.len();
-        for seed in 0..12u64 {
-            let mut runner = make_runner(seed + 200);
-            let strat = proptest::collection::vec(god_ability_block(), batches_per_seed..=batches_per_seed);
+        for seed in 0..8u64 {
+            let mut runner = make_runner(seed + 3000);
+            let strat = proptest::collection::vec(god_ability_block(), batch..=batch);
             let tree = strat.new_tree(&mut runner).unwrap();
             all_dsl.extend(tree.current());
         }
         eprintln!("Generated {} god abilities", all_dsl.len() - god_start);
 
+        eprintln!("Total generated: {}", all_dsl.len());
+
         // --- Deduplicate by ability name, assign unique names ---
         let mut written = 0usize;
         let mut parse_failures = 0usize;
+        let target = 75_000;
 
         for (i, dsl) in all_dsl.iter().enumerate() {
-            // Parse to validate and extract name
             let result = parse_abilities(dsl);
             let (abilities, _) = match result {
                 Ok(v) => v,
@@ -1789,7 +2190,6 @@ ability Transform {
             if abilities.is_empty() { continue; }
 
             let base_name = &abilities[0].name;
-            // Make name unique by appending index
             let unique_name = if seen_names.contains(base_name) {
                 format!("{base_name}_{i}")
             } else {
@@ -1797,7 +2197,6 @@ ability Transform {
                 base_name.clone()
             };
 
-            // Replace ability name in DSL text — only in the "ability <name> {" header
             let fixed_dsl = if unique_name != *base_name {
                 let header = format!("ability {base_name} {{");
                 let new_header = format!("ability {unique_name} {{");
@@ -1810,7 +2209,7 @@ ability Transform {
             fs::write(&path, &fixed_dsl).unwrap();
             written += 1;
 
-            if written >= 10_000 { break; }
+            if written >= target { break; }
         }
 
         eprintln!("\nDataset: {written} abilities written to {}", out_dir.display());
@@ -1822,7 +2221,7 @@ ability Transform {
         let entries: Vec<_> = fs::read_dir(out_dir).unwrap()
             .filter_map(|e| e.ok())
             .collect();
-        let sample_size = 100.min(entries.len());
+        let sample_size = 200.min(entries.len());
         let mut sample_ok = 0;
         for entry in entries.iter().take(sample_size) {
             let content = fs::read_to_string(entry.path()).unwrap();
@@ -1832,6 +2231,6 @@ ability Transform {
         }
         eprintln!("  Sample validation: {sample_ok}/{sample_size} parsed OK");
         assert_eq!(sample_ok, sample_size, "all sampled abilities should parse");
-        assert!(written >= 10_000, "expected ≥10k abilities, got {written}");
+        assert!(written >= target, "expected ≥{target} abilities, got {written}");
     }
 }

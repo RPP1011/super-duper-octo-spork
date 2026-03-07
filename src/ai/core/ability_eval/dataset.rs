@@ -5,7 +5,10 @@ use crate::ai::core::oracle::{run_rollout, score_rollout};
 use crate::ai::effects::AbilityTarget;
 use crate::ai::squad::{generate_intents, SquadAiState};
 
+use crate::ai::effects::dsl::emit::emit_ability_dsl;
+
 use super::categories::AbilityCategory;
+use super::game_state::extract_game_state;
 use super::features::{extract_damage_unit_features, extract_cc_unit_features, extract_heal_unit_features};
 use super::features_aoe::{extract_damage_aoe_features, extract_simple_features, extract_summon_features, extract_obstacle_features};
 use super::oracle_scoring::oracle_score_ability;
@@ -25,6 +28,12 @@ pub struct AbilityEvalSample {
     pub scenario: String,
     pub tick: u64,
     pub unit_id: u32,
+    /// DSL text representation of the ability (for transformer training).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ability_dsl: Option<String>,
+    /// Uniform game state features for cross-attention (70-dim entity vector).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_state: Option<Vec<f32>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +191,8 @@ pub fn generate_ability_eval_dataset_with_encoder(
                     scenario: scenario_name.to_string(),
                     tick: sim.tick,
                     unit_id: uid,
+                    ability_dsl: Some(emit_ability_dsl(&slot.def)),
+                    game_state: Some(extract_game_state(&sim, unit)),
                 });
             }
         }

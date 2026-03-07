@@ -19,6 +19,7 @@ pub fn run_oracle_cmd(args: OracleArgs) -> ExitCode {
         OracleSubcommand::AbilityEncoderExport(args) => training::run_ability_encoder_export(args),
         OracleSubcommand::SelfPlay(args) => selfplay::run_self_play(args),
         OracleSubcommand::RawDataset(args) => selfplay::run_raw_dataset(args),
+        OracleSubcommand::OutcomeDataset(args) => dataset::run_outcome_dataset(args),
     }
 }
 

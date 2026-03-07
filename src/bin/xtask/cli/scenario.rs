@@ -39,6 +39,7 @@ pub enum OracleSubcommand {
     AbilityEncoderExport(AbilityEncoderExportArgs),
     SelfPlay(SelfPlayArgs),
     RawDataset(RawDatasetArgs),
+    OutcomeDataset(OutcomeDatasetArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -191,6 +192,19 @@ pub struct AbilityDatasetArgs {
     /// Path to frozen ability encoder JSON (appends 32-dim embeddings to features)
     #[arg(long)]
     pub ability_encoder: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Generate outcome prediction dataset for entity encoder pre-training")]
+pub struct OutcomeDatasetArgs {
+    /// Path to a scenario .toml file, or a directory
+    pub path: PathBuf,
+    /// Output JSONL file
+    #[arg(long, default_value = "generated/outcome_dataset.jsonl")]
+    pub output: PathBuf,
+    /// Sample every N ticks (controls dataset size)
+    #[arg(long, default_value_t = 5)]
+    pub sample_interval: u64,
 }
 
 #[derive(Debug, Parser)]

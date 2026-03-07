@@ -18,6 +18,7 @@
 //! ```
 
 pub mod ast;
+pub mod emit;
 pub mod error;
 pub mod lower;
 pub mod parser;

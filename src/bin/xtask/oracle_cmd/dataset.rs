@@ -190,3 +190,52 @@ pub fn run_ability_dataset(args: crate::cli::AbilityDatasetArgs) -> ExitCode {
 
     ExitCode::SUCCESS
 }
+
+pub fn run_outcome_dataset(args: crate::cli::OutcomeDatasetArgs) -> ExitCode {
+    use bevy_game::ai::core::ability_eval::{
+        generate_outcome_dataset, write_outcome_dataset,
+    };
+    use bevy_game::scenario::{load_scenario_file, run_scenario_to_state};
+
+    let paths = collect_toml_paths(&args.path);
+    if paths.is_empty() {
+        eprintln!("No *.toml files found in {}.", args.path.display());
+        return ExitCode::from(1);
+    }
+
+    let mut all_samples = Vec::new();
+    let mut wins = 0;
+    let mut losses = 0;
+
+    for toml_path in &paths {
+        let scenario_file = match load_scenario_file(toml_path) {
+            Ok(f) => f,
+            Err(err) => { eprintln!("{err}"); continue; }
+        };
+
+        let cfg = &scenario_file.scenario;
+        let (sim, squad_ai) = run_scenario_to_state(cfg);
+        let samples = generate_outcome_dataset(
+            sim, squad_ai, &cfg.name, cfg.max_ticks, args.sample_interval,
+        );
+
+        if let Some(s) = samples.first() {
+            if s.hero_wins > 0.5 { wins += 1; } else { losses += 1; }
+        }
+        eprintln!("  {} — {} samples, outcome={}", cfg.name, samples.len(),
+            if samples.first().map_or(false, |s| s.hero_wins > 0.5) { "win" } else { "loss" });
+        all_samples.extend(samples);
+    }
+
+    if let Some(parent) = args.output.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    write_outcome_dataset(&all_samples, &args.output)
+        .expect("Failed to write outcome dataset");
+
+    eprintln!("\nTotal: {} samples from {} scenarios ({} wins, {} losses)",
+        all_samples.len(), paths.len(), wins, losses);
+    eprintln!("Written to: {}", args.output.display());
+
+    ExitCode::SUCCESS
+}

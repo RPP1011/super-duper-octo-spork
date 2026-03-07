@@ -23,6 +23,7 @@ pub mod ability_eval;
 pub mod self_play;
 pub mod curriculum;
 pub mod ability_encoding;
+pub mod ability_transformer;
 
 #[cfg(test)]
 mod tests;

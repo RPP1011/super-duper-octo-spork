@@ -30,10 +30,17 @@ pub fn sightline_entropy(nav: &GridNav, width: f32, depth: f32) -> f32 {
         for sx in 0..n_samples {
             let x = width * (sx as f32 + 0.5) / n_samples as f32;
             let z = depth * (sy as f32 + 0.5) / n_samples as f32;
-            let pos = sim_vec2(x, z);
-            if !nav.is_walkable_pos(pos) {
-                continue;
-            }
+            let cs = nav.cell_size;
+            let candidates = [
+                sim_vec2(x, z),
+                sim_vec2(x + cs, z),
+                sim_vec2(x, z + cs),
+                sim_vec2(x + cs, z + cs),
+            ];
+            let pos = match candidates.iter().find(|p| nav.is_walkable_pos(**p)) {
+                Some(&p) => p,
+                None => continue,
+            };
             let dists = raycast_distances(nav, pos, n_rays, max_dist);
             let mean = dists.iter().sum::<f32>() / dists.len() as f32;
             means.push(mean);
@@ -66,10 +73,19 @@ pub fn cover_distribution(nav: &GridNav, width: f32, depth: f32) -> f32 {
         for sx in 0..n {
             let x = width * (sx as f32 + 0.5) / n as f32;
             let z = depth * (sy as f32 + 0.5) / n as f32;
-            let pos = sim_vec2(x, z);
-            if !nav.is_walkable_pos(pos) {
-                continue;
-            }
+            // Try the sample point, then nudge by half-cell offsets to avoid
+            // aliasing with periodic blocked patterns (e.g. checkerboard).
+            let cs = nav.cell_size;
+            let candidates = [
+                sim_vec2(x, z),
+                sim_vec2(x + cs, z),
+                sim_vec2(x, z + cs),
+                sim_vec2(x + cs, z + cs),
+            ];
+            let pos = match candidates.iter().find(|p| nav.is_walkable_pos(**p)) {
+                Some(&p) => p,
+                None => continue,
+            };
             // Best cover from any of 4 cardinal attack directions
             let mut best = 0.0_f32;
             for &(dx, dz) in &[(5.0, 0.0), (-5.0, 0.0), (0.0, 5.0), (0.0, -5.0)] {
@@ -275,10 +291,17 @@ pub fn los_fragmentation(
         for sx in 0..n {
             let dx = width * (sx as f32 + 0.5) / n as f32;
             let dz = depth * (sy as f32 + 0.5) / n as f32;
-            let def_pos = sim_vec2(dx, dz);
-            if !nav.is_walkable_pos(def_pos) {
-                continue;
-            }
+            let cs = nav.cell_size;
+            let def_candidates = [
+                sim_vec2(dx, dz),
+                sim_vec2(dx + cs * 0.5, dz),
+                sim_vec2(dx, dz + cs * 0.5),
+                sim_vec2(dx + cs * 0.5, dz + cs * 0.5),
+            ];
+            let def_pos = match def_candidates.iter().find(|p| nav.is_walkable_pos(**p)) {
+                Some(&p) => p,
+                None => continue,
+            };
 
             let mut visible = 0usize;
             let mut checked = 0usize;
@@ -286,10 +309,16 @@ pub fn los_fragmentation(
             for ay in 0..n {
                 let ax = width * (0.5 + (n - 1 - sx) as f32 * 0.5 / n as f32);
                 let az = depth * (ay as f32 + 0.5) / n as f32;
-                let atk_pos = sim_vec2(ax, az);
-                if !nav.is_walkable_pos(atk_pos) {
-                    continue;
-                }
+                let atk_candidates = [
+                    sim_vec2(ax, az),
+                    sim_vec2(ax + cs * 0.5, az),
+                    sim_vec2(ax, az + cs * 0.5),
+                    sim_vec2(ax + cs * 0.5, az + cs * 0.5),
+                ];
+                let atk_pos = match atk_candidates.iter().find(|p| nav.is_walkable_pos(**p)) {
+                    Some(&p) => p,
+                    None => continue,
+                };
                 checked += 1;
                 if has_line_of_sight(nav, def_pos, atk_pos) {
                     visible += 1;

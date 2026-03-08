@@ -14,7 +14,7 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 /// Full vocabulary in ID order.  Index == token ID.
-const VOCAB: &[&str] = &[
+pub const VOCAB: &[&str] = &[
     // 0-7: special tokens
     "[PAD]", "[CLS]", "[MASK]", "[SEP]", "[UNK]", "[NAME]", "[STR]", "[TAG]",
     // 8-17: punctuation

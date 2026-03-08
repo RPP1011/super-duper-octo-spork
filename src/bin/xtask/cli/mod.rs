@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use super::diagnose_cmd::DiagnoseArgs;
+
 #[derive(Debug, Parser)]
 #[command(about = "Project development tasks")]
 pub struct Args {
@@ -21,6 +23,8 @@ pub enum TaskCommand {
     Capture(CaptureCommand),
     Ralph(RalphCommand),
     Scenario(ScenarioCommand),
+    /// Run model diagnostic inference and generate HTML visualization report.
+    Diagnose(DiagnoseArgs),
 }
 
 // ---------------------------------------------------------------------------

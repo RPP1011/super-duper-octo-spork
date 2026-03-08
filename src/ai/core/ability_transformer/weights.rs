@@ -1830,6 +1830,395 @@ pub struct EntityStateV3 {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostic capture methods
+// ---------------------------------------------------------------------------
+
+use super::diagnostics::{AttentionCapture, CrossAttentionCapture, DiagnosticCapture};
+
+impl TransformerLayer {
+    /// Same as `multi_head_attention` but captures attention weights.
+    /// Returns `[n_heads][seq_len][seq_len]` attention probabilities.
+    fn multi_head_attention_capture(
+        &self,
+        qkv: &[f32],
+        output: &mut [f32],
+        seq_len: usize,
+        mask: &[bool],
+    ) -> Vec<Vec<Vec<f32>>> {
+        let d = self.d_model;
+        let h = self.n_heads;
+        let hd = self.head_dim;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        let mut all_weights = Vec::with_capacity(h);
+
+        for head in 0..h {
+            let offset = head * hd;
+            let mut head_weights = Vec::with_capacity(seq_len);
+
+            for qi in 0..seq_len {
+                let mut scores = vec![f32::NEG_INFINITY; seq_len];
+                for ki in 0..seq_len {
+                    if !mask[ki] { continue; }
+                    let mut dot = 0.0f32;
+                    for f in 0..hd {
+                        let q = qkv[qi * 3 * d + offset + f];
+                        let k = qkv[ki * 3 * d + d + offset + f];
+                        dot += q * k;
+                    }
+                    scores[ki] = dot * scale;
+                }
+                softmax_inplace(&mut scores);
+
+                // Weighted sum of values
+                for f in 0..hd {
+                    let mut sum = 0.0f32;
+                    for vi in 0..seq_len {
+                        let v = qkv[vi * 3 * d + 2 * d + offset + f];
+                        sum += scores[vi] * v;
+                    }
+                    output[qi * d + offset + f] = sum;
+                }
+
+                head_weights.push(scores);
+            }
+            all_weights.push(head_weights);
+        }
+
+        all_weights
+    }
+
+    /// Forward pass with attention weight capture.
+    fn forward_capture(
+        &self,
+        seq: &mut [f32],
+        seq_len: usize,
+        mask: &[bool],
+        scratch: &mut TransformerScratch,
+    ) -> Vec<Vec<Vec<f32>>> {
+        let d = self.d_model;
+        scratch.ensure(seq_len, d, self.ff1.out_dim);
+
+        // Pre-norm self-attention
+        for t in 0..seq_len {
+            scratch.normed[t * d..(t + 1) * d].copy_from_slice(&seq[t * d..(t + 1) * d]);
+            self.norm1.forward(&mut scratch.normed[t * d..(t + 1) * d]);
+        }
+        for t in 0..seq_len {
+            self.attn_in_proj.forward(
+                &scratch.normed[t * d..(t + 1) * d],
+                &mut scratch.qkv[t * 3 * d..(t + 1) * 3 * d],
+            );
+        }
+        for v in scratch.attn_out[..seq_len * d].iter_mut() { *v = 0.0; }
+        let weights = self.multi_head_attention_capture(
+            &scratch.qkv, &mut scratch.attn_out, seq_len, mask,
+        );
+
+        // Output projection + residual
+        for t in 0..seq_len {
+            self.attn_out_proj.forward(
+                &scratch.attn_out[t * d..(t + 1) * d],
+                &mut scratch.proj_out[..d],
+            );
+            for i in 0..d { seq[t * d + i] += scratch.proj_out[i]; }
+        }
+
+        // Pre-norm FFN
+        for t in 0..seq_len {
+            scratch.normed[t * d..(t + 1) * d].copy_from_slice(&seq[t * d..(t + 1) * d]);
+            self.norm2.forward(&mut scratch.normed[t * d..(t + 1) * d]);
+        }
+        for t in 0..seq_len {
+            self.ff1.forward_gelu(&scratch.normed[t * d..(t + 1) * d], &mut scratch.ff_hidden);
+            self.ff2.forward(&scratch.ff_hidden, &mut scratch.ff_out[..d]);
+            for i in 0..d { seq[t * d + i] += scratch.ff_out[i]; }
+        }
+
+        weights
+    }
+}
+
+impl FlatCrossAttention {
+    /// Cross-attention with attention weight capture.
+    /// Returns (output [d_model], weights [n_heads][n_entities]).
+    fn forward_capture(
+        &self,
+        query: &[f32],
+        kv: &[f32],
+        kv_mask: &[bool],
+        n_entities: usize,
+    ) -> (Vec<f32>, Vec<Vec<f32>>) {
+        let d = self.d_model;
+        let h = self.n_heads;
+        let hd = self.head_dim;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        let mut normed_q = query.to_vec();
+        self.norm_q.forward(&mut normed_q);
+        let mut normed_kv = kv.to_vec();
+        for ent in 0..n_entities {
+            self.norm_kv.forward(&mut normed_kv[ent * d..(ent + 1) * d]);
+        }
+
+        let mut q_qkv = vec![0.0f32; 3 * d];
+        self.attn_in_proj.forward(&normed_q, &mut q_qkv);
+        let mut kv_qkv = vec![0.0f32; n_entities * 3 * d];
+        for ent in 0..n_entities {
+            self.attn_in_proj.forward(
+                &normed_kv[ent * d..(ent + 1) * d],
+                &mut kv_qkv[ent * 3 * d..(ent + 1) * 3 * d],
+            );
+        }
+
+        let mut attn_out = vec![0.0f32; d];
+        let mut all_weights = Vec::with_capacity(h);
+
+        for head in 0..h {
+            let offset = head * hd;
+            let mut scores = vec![f32::NEG_INFINITY; n_entities];
+            for ki in 0..n_entities {
+                if !kv_mask[ki] { continue; }
+                let mut dot = 0.0f32;
+                for f in 0..hd {
+                    let q = q_qkv[offset + f];
+                    let k = kv_qkv[ki * 3 * d + d + offset + f];
+                    dot += q * k;
+                }
+                scores[ki] = dot * scale;
+            }
+            softmax_inplace(&mut scores);
+
+            for f in 0..hd {
+                let mut sum = 0.0f32;
+                for vi in 0..n_entities {
+                    let v = kv_qkv[vi * 3 * d + 2 * d + offset + f];
+                    sum += scores[vi] * v;
+                }
+                attn_out[offset + f] = sum;
+            }
+            all_weights.push(scores);
+        }
+
+        let mut proj_out = vec![0.0f32; d];
+        self.attn_out_proj.forward(&attn_out, &mut proj_out);
+
+        let mut x = vec![0.0f32; d];
+        for i in 0..d { x[i] = query[i] + proj_out[i]; }
+
+        let mut ff_normed = x.clone();
+        self.norm_ff.forward(&mut ff_normed);
+        let mut ff_hidden = vec![0.0f32; self.ff1.out_dim];
+        self.ff1.forward_gelu(&ff_normed, &mut ff_hidden);
+        let mut ff_out = vec![0.0f32; d];
+        self.ff2.forward(&ff_hidden, &mut ff_out);
+        for i in 0..d { x[i] += ff_out[i]; }
+
+        (x, all_weights)
+    }
+}
+
+impl FlatEntityEncoderV3 {
+    /// Forward with attention weight capture.
+    fn forward_capture(
+        &self,
+        entities: &[&[f32]],
+        entity_types: &[usize],
+        threats: &[&[f32]],
+        positions: &[&[f32]],
+    ) -> (Vec<f32>, Vec<bool>, usize, Vec<usize>, Vec<AttentionCapture>) {
+        let d = self.d_model;
+        let n_ents = entities.len();
+        let n_threats = threats.len();
+        let n_positions = positions.len();
+        let n_total = n_ents + n_threats + n_positions;
+
+        let mut tokens = vec![0.0f32; n_total * d];
+        let mut mask = vec![true; n_total];
+        let mut full_type_ids = vec![0usize; n_total];
+
+        for (i, (feats, &type_id)) in entities.iter().zip(entity_types).enumerate() {
+            let exists = feats.len() >= 30 && feats[29] > 0.5;
+            mask[i] = exists;
+            full_type_ids[i] = type_id;
+            self.entity_proj.forward(feats, &mut tokens[i * d..(i + 1) * d]);
+            let tid = type_id.min(NUM_ENTITY_TYPES_V3 - 1);
+            for j in 0..d { tokens[i * d + j] += self.type_emb[tid * d + j]; }
+            self.input_norm.forward(&mut tokens[i * d..(i + 1) * d]);
+        }
+
+        for (ti, feats) in threats.iter().enumerate() {
+            let i = n_ents + ti;
+            let exists = feats.len() >= THREAT_DIM && feats[7] > 0.5;
+            mask[i] = exists;
+            full_type_ids[i] = 3;
+            self.threat_proj.forward(feats, &mut tokens[i * d..(i + 1) * d]);
+            for j in 0..d { tokens[i * d + j] += self.type_emb[3 * d + j]; }
+            self.input_norm.forward(&mut tokens[i * d..(i + 1) * d]);
+        }
+
+        for (pi, feats) in positions.iter().enumerate() {
+            let i = n_ents + n_threats + pi;
+            mask[i] = true;
+            full_type_ids[i] = 4;
+            self.position_proj.forward(feats, &mut tokens[i * d..(i + 1) * d]);
+            for j in 0..d { tokens[i * d + j] += self.type_emb[4 * d + j]; }
+            self.input_norm.forward(&mut tokens[i * d..(i + 1) * d]);
+        }
+
+        let mut scratch = TransformerScratch::default();
+        let mut attn_captures = Vec::with_capacity(self.self_attn_layers.len());
+        for (layer_idx, layer) in self.self_attn_layers.iter().enumerate() {
+            let weights = layer.forward_capture(&mut tokens, n_total, &mask, &mut scratch);
+            attn_captures.push(AttentionCapture { layer: layer_idx, weights });
+        }
+
+        for i in 0..n_total {
+            self.out_norm.forward(&mut tokens[i * d..(i + 1) * d]);
+        }
+
+        (tokens, mask, n_total, full_type_ids, attn_captures)
+    }
+}
+
+impl ActorCriticWeightsV3 {
+    /// Run full inference with diagnostic capture.
+    ///
+    /// Returns a `DiagnosticCapture` containing attention weights,
+    /// intermediate embeddings, and all decision outputs.
+    pub fn diagnose(
+        &self,
+        entities: &[&[f32]],
+        entity_types: &[usize],
+        threats: &[&[f32]],
+        positions: &[&[f32]],
+        ability_token_ids: &[Option<&[u32]>],
+        entity_labels: Vec<String>,
+    ) -> DiagnosticCapture {
+        let d = self.d_model;
+
+        // --- Encode abilities through transformer with capture ---
+        let mut transformer_attention = Vec::new();
+        let mut cls_embeddings: Vec<Option<Vec<f32>>> = Vec::new();
+        let mut first_token_ids = Vec::new();
+
+        for (slot, tids_opt) in ability_token_ids.iter().enumerate().take(AC_MAX_ABILITIES) {
+            if let Some(tids) = tids_opt {
+                let seq_len = tids.len().min(self.max_seq_len);
+                let mut seq = vec![0.0f32; seq_len * d];
+                let mut mask = vec![false; seq_len];
+
+                for (t, &tid) in tids.iter().take(seq_len).enumerate() {
+                    let id = (tid as usize).min(self.vocab_size - 1);
+                    mask[t] = id != self.pad_id;
+                    for i in 0..d {
+                        seq[t * d + i] = self.token_emb[id * d + i] + self.pos_emb[t * d + i];
+                    }
+                }
+
+                // Only capture attention for the first ability (avoids huge reports)
+                let mut scratch = TransformerScratch::default();
+                if slot == 0 {
+                    first_token_ids = tids.iter().copied().collect();
+                    for (layer_idx, layer) in self.layers.iter().enumerate() {
+                        let weights = layer.forward_capture(&mut seq, seq_len, &mask, &mut scratch);
+                        transformer_attention.push(AttentionCapture {
+                            layer: layer_idx,
+                            weights,
+                        });
+                    }
+                } else {
+                    for layer in &self.layers {
+                        layer.forward(&mut seq, seq_len, &mask, &mut scratch);
+                    }
+                }
+
+                let mut cls = vec![0.0f32; d];
+                cls.copy_from_slice(&seq[0..d]);
+                self.out_norm.forward(&mut cls);
+                cls_embeddings.push(Some(cls));
+            } else {
+                cls_embeddings.push(None);
+            }
+        }
+
+        // --- Encode entities with capture ---
+        let (tokens, mask, n_total, type_ids, entity_attn) =
+            self.entity_encoder.forward_capture(entities, entity_types, threats, positions);
+
+        let mut pooled = vec![0.0f32; d];
+        let mut count = 0.0f32;
+        for i in 0..n_total {
+            if mask[i] {
+                count += 1.0;
+                for j in 0..d { pooled[j] += tokens[i * d + j]; }
+            }
+        }
+        if count > 0.0 {
+            for v in &mut pooled { *v /= count; }
+        }
+
+        // Entity embeddings for similarity visualization
+        let entity_embeddings: Vec<Vec<f32>> = (0..n_total)
+            .map(|i| tokens[i * d..(i + 1) * d].to_vec())
+            .collect();
+
+        // --- Cross-attention with capture ---
+        let mut cross_captures = Vec::new();
+        let mut ability_cross_embs: Vec<Option<Vec<f32>>> = Vec::with_capacity(AC_MAX_ABILITIES);
+        for (slot, cls_opt) in cls_embeddings.iter().enumerate().take(AC_MAX_ABILITIES) {
+            if let Some(cls) = cls_opt {
+                let (cross_emb, cross_weights) = self.cross_attn.forward_capture(
+                    cls, &tokens, &mask, n_total,
+                );
+                cross_captures.push(CrossAttentionCapture {
+                    ability_slot: slot,
+                    weights: cross_weights,
+                });
+                ability_cross_embs.push(Some(cross_emb));
+            } else {
+                ability_cross_embs.push(None);
+            }
+        }
+
+        // --- Pointer head ---
+        let pointer_out = self.pointer_head.forward(
+            &pooled, &tokens, &mask, n_total, &type_ids, &ability_cross_embs,
+        );
+
+        // Value head (not included in V3 export — pointer-only architecture)
+        let value_out = 0.0f32;
+
+        // First ability CLS embedding for report
+        let cls_embedding = cls_embeddings
+            .first()
+            .and_then(|c| c.clone())
+            .unwrap_or_default();
+
+        DiagnosticCapture {
+            d_model: self.d_model,
+            n_heads: self.entity_encoder.self_attn_layers.first()
+                .map(|l| l.n_heads)
+                .unwrap_or(4),
+            token_ids: first_token_ids,
+            transformer_attention,
+            cls_embedding,
+            entity_labels,
+            entity_type_ids: type_ids,
+            entity_attention: entity_attn,
+            entity_embeddings,
+            pooled_state: pooled,
+            cross_attention: cross_captures,
+            action_type_logits: pointer_out.type_logits,
+            attack_pointer: pointer_out.attack_ptr,
+            move_pointer: pointer_out.move_ptr,
+            ability_pointers: pointer_out.ability_ptrs,
+            value: value_out,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

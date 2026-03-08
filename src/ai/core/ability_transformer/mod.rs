@@ -15,6 +15,7 @@
 
 mod weights;
 pub mod tokenizer;
+pub mod diagnostics;
 
 #[cfg(feature = "burn-training")]
 pub mod burn_models;

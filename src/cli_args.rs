@@ -35,6 +35,7 @@ pub struct CliArgs {
     pub screenshot_hub_stages_dir: Option<String>,
     pub screenshot_every: u32,
     pub screenshot_warmup_frames: u32,
+    pub attention_replay_path: Option<String>,
 }
 
 fn parse_seed_arg(value: &str) -> Option<u64> {
@@ -87,6 +88,7 @@ pub fn parse_cli_args(args: &[String]) -> Option<CliArgs> {
         screenshot_hub_stages_dir: None,
         screenshot_every: 1,
         screenshot_warmup_frames: 3,
+        attention_replay_path: None,
     };
 
     let mut i = 1;
@@ -249,6 +251,15 @@ pub fn parse_cli_args(args: &[String]) -> Option<CliArgs> {
                     }
                 } else {
                     eprintln!("Error: --screenshot-warmup-frames requires a value.");
+                    return None;
+                }
+            }
+            "--attention-replay" => {
+                if let Some(path) = args.get(i + 1) {
+                    cli.attention_replay_path = Some(path.clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --attention-replay requires a .attn file path.");
                     return None;
                 }
             }

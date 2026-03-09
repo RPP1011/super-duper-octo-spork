@@ -16,6 +16,8 @@
 mod weights;
 pub mod tokenizer;
 pub mod diagnostics;
+pub mod attention_recording;
+pub mod attention_replay;
 
 #[cfg(feature = "burn-training")]
 pub mod burn_models;

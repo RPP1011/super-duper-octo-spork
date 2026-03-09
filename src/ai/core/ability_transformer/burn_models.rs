@@ -633,6 +633,14 @@ impl CrossAttentionBlockConfig {
     }
 }
 
+/// Cross-attention output with optional captured weights.
+pub struct CrossAttentionOutput<B: Backend> {
+    /// Output embedding `[batch, d_model]`.
+    pub output: Tensor<B, 2>,
+    /// Attention weights `[batch, n_heads, 1, key_len]` if captured.
+    pub weights: Option<Tensor<B, 4>>,
+}
+
 impl<B: Backend> CrossAttentionBlock<B> {
     /// Cross-attention: query attends to key/value tokens.
     ///
@@ -647,6 +655,28 @@ impl<B: Backend> CrossAttentionBlock<B> {
         kv: Tensor<B, 3>,
         kv_mask: Option<Tensor<B, 2, Bool>>,
     ) -> Tensor<B, 2> {
+        self.forward_inner(query, kv, kv_mask, false).output
+    }
+
+    /// Cross-attention with captured attention weights for diagnostics.
+    ///
+    /// Returns `(output [batch, d_model], weights [batch, n_heads, 1, key_len])`.
+    pub fn forward_with_capture(
+        &self,
+        query: Tensor<B, 2>,
+        kv: Tensor<B, 3>,
+        kv_mask: Option<Tensor<B, 2, Bool>>,
+    ) -> CrossAttentionOutput<B> {
+        self.forward_inner(query, kv, kv_mask, true)
+    }
+
+    fn forward_inner(
+        &self,
+        query: Tensor<B, 2>,
+        kv: Tensor<B, 3>,
+        kv_mask: Option<Tensor<B, 2, Bool>>,
+        capture_weights: bool,
+    ) -> CrossAttentionOutput<B> {
         // Expand query to [batch, 1, d_model]
         let q = self.norm_q.forward(query.clone()).unsqueeze_dim(1);
         let kv_normed = self.norm_kv.forward(kv);
@@ -659,6 +689,13 @@ impl<B: Backend> CrossAttentionBlock<B> {
         }
         let attn_out = self.cross_attn.forward(mha_input);
 
+        // Capture weights before consuming the output
+        let weights = if capture_weights {
+            Some(attn_out.weights)
+        } else {
+            None
+        };
+
         // Squeeze back to [batch, d_model]
         let attn_out = attn_out.context.squeeze::<2>();
 
@@ -669,7 +706,10 @@ impl<B: Backend> CrossAttentionBlock<B> {
         let ff_out = self.gelu.forward(ff_out);
         let ff_out = self.ff_l2.forward(ff_out);
 
-        x + ff_out
+        CrossAttentionOutput {
+            output: x + ff_out,
+            weights,
+        }
     }
 }
 
@@ -1520,6 +1560,95 @@ impl<B: Backend> AbilityActorCriticV3<B> {
 
         (pointer_out, value)
     }
+
+    /// Forward pass with cross-attention weight capture for 3D replay.
+    ///
+    /// Same as `forward` but captures `MhaOutput.weights` from each
+    /// cross-attention call. Returns captured cross-attention frames
+    /// alongside the normal outputs.
+    pub fn forward_with_diagnostics(
+        &self,
+        entity_features: Tensor<B, 3>,
+        entity_type_ids: Tensor<B, 2, Int>,
+        threat_features: Tensor<B, 3>,
+        entity_mask: Tensor<B, 2, Bool>,
+        threat_mask: Tensor<B, 2, Bool>,
+        ability_cls: &[Option<Tensor<B, 2>>],
+        position_features: Option<Tensor<B, 3>>,
+        position_mask: Option<Tensor<B, 2, Bool>>,
+    ) -> (BurnPointerOutput<B>, Tensor<B, 2>, Vec<BurnCrossAttentionCapture<B>>) {
+        let [batch, ..] = entity_features.dims();
+        let [_, n_threats, _] = threat_features.dims();
+        let n_positions = position_features
+            .as_ref()
+            .map(|p| p.dims()[1])
+            .unwrap_or(0);
+        let device = &entity_features.device();
+
+        let (tokens, full_mask, pooled) = self.encode_entities(
+            entity_features,
+            entity_type_ids.clone(),
+            threat_features,
+            entity_mask,
+            threat_mask,
+            position_features,
+            position_mask,
+        );
+
+        // Cross-attend with weight capture
+        let mut ability_cross_embs: Vec<Option<Tensor<B, 2>>> =
+            Vec::with_capacity(MAX_ABILITIES);
+        let mut cross_captures: Vec<BurnCrossAttentionCapture<B>> = Vec::new();
+
+        for (i, cls_opt) in ability_cls.iter().enumerate().take(MAX_ABILITIES) {
+            if let Some(cls) = cls_opt {
+                let ca_out = self.cross_attn.forward_with_capture(
+                    cls.clone(),
+                    tokens.clone(),
+                    Some(full_mask.clone()),
+                );
+                ability_cross_embs.push(Some(ca_out.output));
+                if let Some(w) = ca_out.weights {
+                    cross_captures.push(BurnCrossAttentionCapture {
+                        ability_slot: i,
+                        weights: w,
+                    });
+                }
+            } else {
+                ability_cross_embs.push(None);
+            }
+        }
+
+        let full_type_ids = Self::build_full_type_ids(
+            entity_type_ids,
+            n_threats,
+            n_positions,
+            batch,
+            device,
+        );
+
+        let pointer_out = self.pointer_head.forward(
+            pooled.clone(),
+            tokens,
+            full_mask,
+            &ability_cross_embs,
+            full_type_ids,
+        );
+
+        let value = self.value_l1.forward(pooled);
+        let value = self.gelu.forward(value);
+        let value = self.value_l2.forward(value);
+
+        (pointer_out, value, cross_captures)
+    }
+}
+
+/// Captured cross-attention weights from a Burn forward pass.
+pub struct BurnCrossAttentionCapture<B: Backend> {
+    /// Ability slot (0-7).
+    pub ability_slot: usize,
+    /// Attention weights `[batch, n_heads, 1, key_len]`.
+    pub weights: Tensor<B, 4>,
 }
 
 // ---------------------------------------------------------------------------

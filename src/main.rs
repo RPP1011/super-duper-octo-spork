@@ -111,6 +111,10 @@ fn main() {
         run_custom_scenario_visualization(&path, &out);
         return;
     }
+    if let Some(path) = cli.attention_replay_path {
+        run_attention_replay(&path);
+        return;
+    }
 
     let horde_flags = (cli.horde_3d_flag as u8) + (cli.horde_3d_hero_win_flag as u8);
     if !headless_mode && !run_hub_flag && scenario_3d_path.is_none() && horde_flags == 0 {
@@ -359,6 +363,45 @@ fn main() {
     app.run();
 }
 
+fn run_attention_replay(path: &str) {
+    use ai::core::ability_transformer::attention_recording::AttentionRecording;
+    use ai::core::ability_transformer::attention_replay::{AttentionReplayPlugin, ReplayState};
+
+    let recording = match AttentionRecording::load(path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to load attention recording '{}': {}", path, e);
+            return;
+        }
+    };
+
+    println!(
+        "Loaded attention recording: {} frames, d_model={}, n_heads={}, {} layers",
+        recording.frames.len(),
+        recording.d_model,
+        recording.n_heads,
+        recording.n_layers,
+    );
+
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(bevy::window::Window {
+            title: format!("Attention Replay — {}", recording.description),
+            resolution: bevy::window::WindowResolution::new(1280.0, 720.0),
+            ..default()
+        }),
+        ..default()
+    }))
+    .add_plugins(EguiPlugin)
+    .add_plugins(AttentionReplayPlugin);
+
+    // Insert loaded recording into replay state
+    let mut replay_state = ReplayState::default();
+    replay_state.load_recording(recording);
+    app.insert_resource(replay_state);
+
+    app.run();
+}
 
 #[cfg(test)]
 mod tests;

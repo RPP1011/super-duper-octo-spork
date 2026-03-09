@@ -1085,6 +1085,21 @@ pub struct NextStateSample {
     pub tick: u64,
 }
 
+/// Per-unit ability properties, emitted once per scenario.
+/// Maps unit_id → list of 80-dim ability property vectors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbilityRegistryEntry {
+    pub unit_id: u32,
+    pub abilities: Vec<Vec<f32>>,  // each inner vec is 80-dim
+}
+
+/// Full ability registry for a scenario, emitted before tick data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbilityRegistry {
+    pub scenario: String,
+    pub entries: Vec<AbilityRegistryEntry>,
+}
+
 /// Extract game state V2 + unit IDs for next-state prediction.
 fn extract_game_state_with_ids(
     state: &SimState,
@@ -1157,13 +1172,27 @@ pub fn generate_nextstate_dataset_streaming(
     max_ticks: u64,
     sample_interval: u64,
     mut emit: impl FnMut(NextStateSample),
+    mut emit_registry: impl FnMut(AbilityRegistry),
 ) -> usize {
     use crate::ai::core::{step, FIXED_TICK_MS};
+    use crate::ai::core::ability_encoding::extract_ability_properties;
     use crate::ai::squad::generate_intents;
 
     let mut sim = initial_sim;
     let mut squad_ai = initial_squad_ai;
     let mut count = 0usize;
+
+    // Emit ability registry once before tick loop
+    let entries: Vec<AbilityRegistryEntry> = sim.units.iter().map(|u| {
+        let abilities = u.abilities.iter().map(|slot| {
+            extract_ability_properties(&slot.def).to_vec()
+        }).collect();
+        AbilityRegistryEntry { unit_id: u.id, abilities }
+    }).collect();
+    emit_registry(AbilityRegistry {
+        scenario: scenario_name.to_string(),
+        entries,
+    });
 
     for tick in 0..max_ticks {
         let intents = generate_intents(&sim, &mut squad_ai, FIXED_TICK_MS);

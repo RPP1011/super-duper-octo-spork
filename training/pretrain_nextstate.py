@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Pre-train entity encoder V3 on next-state prediction.
 
-Instead of predicting fight outcome (long-horizon), predict per-entity state
-changes over a short horizon (5-40 ticks). This teaches the encoder to
-understand tactical dynamics: who takes damage, who gets healed, who dies.
+Decomposed approach: separate prediction heads for each dynamic feature group,
+trained with symlog + beta-NLL. Static features (armor, ranges, base stats)
+are skipped entirely.
 
-Key techniques (from world model / multi-task learning literature):
-- **Symlog transform**: compress feature magnitudes so all 30 dims contribute
-  equally to loss (DreamerV3, Hafner 2023)
-- **Gaussian output head + beta-NLL**: predict mean + log-variance per feature,
-  naturally downweighting stochastic/noisy features while modeling uncertainty
-  (Seitzer et al. 2022, beta=0.5)
-- **Residual prediction**: predict delta from current state, stable features
-  get free baseline
+Feature groups predicted:
+  - hp:       [0, 1, 2]  — hp_pct, shield_pct, resource_pct
+  - position: [5, 6]     — x, y
+  - cooldown: [17, 20, 23] — ability/heal/CC cd_remaining_pct
+  - state:    [24, 25, 26, 27] — is_casting, cast_progress, is_stunned, has_shield
+  - exists:   [29]        — alive/dead
+
+Skipped (static/derived): armor(3,4), distance(7), terrain(8-11),
+  combat stats(12-14), ability/heal/CC base stats(15-16,18-19,21-22),
+  cumulative(28).
+
+Short-horizon training: start at delta 1-3 ticks for easy predictions,
+expand to full range only after solidly beating baseline.
 
 Usage:
     uv run --with numpy --with torch training/pretrain_nextstate.py \
@@ -25,11 +30,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import random
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -42,10 +45,28 @@ from grokfast import GrokfastEMA
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-ENTITY_DIM = 30
+ENTITY_DIM = 30       # raw features per entity in npz
+ENTITY_INPUT_DIM = 32  # +2 relative position features (dx_from_self, dy_from_self)
 THREAT_DIM = 8
 POSITION_DIM = 8
 NUM_TYPES = 5  # self=0, enemy=1, ally=2, threat=3, position=4
+
+# Dynamic feature groups: name → list of feature indices
+# exists uses BCE (Bernoulli), all others use beta-NLL (Gaussian)
+DYNAMIC_GROUPS = {
+    "hp": [0, 1],             # hp_pct, shield_pct (resource_pct removed — different dynamics)
+    "pos": [5, 6],            # absolute x, y (predicted as movement delta)
+    "cd": [17, 20, 23],
+    "state": [24, 25, 26, 27],
+    "exists": [29],           # BCE loss, not Gaussian
+}
+BCE_GROUPS = {"exists"}       # groups using sigmoid + BCE instead of beta-NLL
+# All dynamic indices (13 total)
+DYNAMIC_INDICES = []
+for indices in DYNAMIC_GROUPS.values():
+    DYNAMIC_INDICES.extend(indices)
+DYNAMIC_INDICES = sorted(DYNAMIC_INDICES)
+N_DYNAMIC = len(DYNAMIC_INDICES)  # 13
 
 
 # ---------------------------------------------------------------------------
@@ -54,12 +75,10 @@ NUM_TYPES = 5  # self=0, enemy=1, ally=2, threat=3, position=4
 
 
 def symlog(x: torch.Tensor) -> torch.Tensor:
-    """sign(x) * log(1 + |x|). Compresses large magnitudes, preserves small."""
     return x.sign() * (1 + x.abs()).log()
 
 
 def symexp(x: torch.Tensor) -> torch.Tensor:
-    """Inverse of symlog: sign(x) * (exp(|x|) - 1)."""
     return x.sign() * (x.abs().exp() - 1)
 
 
@@ -74,14 +93,7 @@ def beta_nll_loss(
     target: torch.Tensor,
     beta: float = 0.5,
 ) -> torch.Tensor:
-    """Gaussian NLL with beta-weighting to prevent variance inflation.
-
-    L = (variance^beta) * [0.5 * log_var + 0.5 * (target - mean)^2 / variance]
-
-    beta=0.5 balances mean accuracy and calibrated variance.
-    """
     variance = log_var.exp()
-    # Detach variance^beta so it acts as a weighting, not a gradient path
     weight = variance.detach() ** beta
     nll = 0.5 * log_var + 0.5 * (target - mean) ** 2 / variance
     return (weight * nll).mean()
@@ -92,14 +104,48 @@ def beta_nll_loss(
 # ---------------------------------------------------------------------------
 
 
-class EntityEncoderNextState(nn.Module):
-    """EntityEncoderV3 + per-entity next-state prediction heads.
+class PredictionHead(nn.Module):
+    """Small MLP predicting mean + log_var for a Gaussian feature group."""
+
+    def __init__(self, d_in: int, n_features: int, d_hidden: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_in, d_hidden),
+            nn.GELU(),
+            nn.Linear(d_hidden, n_features * 2),  # mean + log_var
+        )
+        self.n_features = n_features
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        out = self.net(x)
+        mean, log_var = out.split(self.n_features, dim=-1)
+        return mean, log_var.clamp(-10.0, 10.0)
+
+
+class BinaryHead(nn.Module):
+    """Small MLP predicting logits for a Bernoulli feature group (BCE loss)."""
+
+    def __init__(self, d_in: int, n_features: int, d_hidden: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_in, d_hidden),
+            nn.GELU(),
+            nn.Linear(d_hidden, n_features),  # raw logits
+        )
+        self.n_features = n_features
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)  # logits, not sigmoid
+
+
+class EntityEncoderDecomposed(nn.Module):
+    """EntityEncoderV3 + per-group decomposed prediction heads.
 
     The encoder portion matches model.py::EntityEncoderV3 exactly,
     so weights transfer directly via `encoder.*` prefix.
 
-    Output head predicts 30 means + 30 log-variances (Gaussian),
-    trained with beta-NLL loss for calibrated uncertainty.
+    Each dynamic feature group gets its own small prediction head with
+    independent beta-NLL loss and learned task weight.
     """
 
     def __init__(self, d_model: int = 32, n_heads: int = 4, n_layers: int = 4):
@@ -108,7 +154,7 @@ class EntityEncoderNextState(nn.Module):
 
         # Entity/threat/position projections (match EntityEncoderV3)
         self.encoder = nn.Module()
-        self.encoder.entity_proj = nn.Linear(ENTITY_DIM, d_model)
+        self.encoder.entity_proj = nn.Linear(ENTITY_INPUT_DIM, d_model)
         self.encoder.threat_proj = nn.Linear(THREAT_DIM, d_model)
         self.encoder.position_proj = nn.Linear(POSITION_DIM, d_model)
         self.encoder.type_emb = nn.Embedding(NUM_TYPES, d_model)
@@ -126,13 +172,19 @@ class EntityEncoderNextState(nn.Module):
         self.encoder.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         self.encoder.out_norm = nn.LayerNorm(d_model)
 
-        # Per-entity next-state prediction head
-        # Predicts 30 mean deltas + 30 log-variances (Gaussian output)
-        self.state_head = nn.Sequential(
-            nn.Linear(d_model + 1, d_model * 2),  # +1 for delta encoding
-            nn.GELU(),
-            nn.Linear(d_model * 2, ENTITY_DIM * 2),  # mean + log_var
-        )
+        # Per-group prediction heads (input: d_model + 1 for delta)
+        d_in = d_model + 1
+        d_hidden = d_model * 2
+        self.heads = nn.ModuleDict()
+        for name, indices in DYNAMIC_GROUPS.items():
+            if name in BCE_GROUPS:
+                self.heads[name] = BinaryHead(d_in, len(indices), d_hidden)
+            else:
+                self.heads[name] = PredictionHead(d_in, len(indices), d_hidden)
+
+        # Kendall-style per-group task weights
+        n_groups = len(DYNAMIC_GROUPS)
+        self.log_task_vars = nn.Parameter(torch.zeros(n_groups))
 
         self._init_weights()
 
@@ -152,10 +204,10 @@ class EntityEncoderNextState(nn.Module):
         threat_mask: torch.Tensor,
         position_features: torch.Tensor | None = None,
         position_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Encode entities + threats + positions.
 
-        Returns (tokens, full_mask) where tokens[:, :n_entities] are entity tokens.
+        Returns tokens (B, S, d_model) where S = n_entities + n_threats [+ n_positions].
         """
         B = entity_features.shape[0]
         device = entity_features.device
@@ -188,7 +240,7 @@ class EntityEncoderNextState(nn.Module):
         tokens = self.encoder.encoder(tokens, src_key_padding_mask=full_mask)
         tokens = self.encoder.out_norm(tokens)
 
-        return tokens, full_mask
+        return tokens
 
     def forward(
         self,
@@ -200,19 +252,13 @@ class EntityEncoderNextState(nn.Module):
         delta_normalized: torch.Tensor,
         position_features: torch.Tensor | None = None,
         position_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Predict per-entity state at T+delta as Gaussian (mean, log_var).
+    ) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        """Predict per-group (mean, log_var) for each dynamic feature group.
 
-        Parameters
-        ----------
-        delta_normalized : (batch,) — delta / max_delta, in [0, 1]
-
-        Returns
-        -------
-        mean : (batch, max_entities, 30) — predicted symlog(entity features) at T+delta
-        log_var : (batch, max_entities, 30) — per-feature log-variance (uncertainty)
+        Returns dict: group_name → (mean, log_var), each (B, E, n_features).
+        Mean is residual in symlog space: symlog(current) + predicted_delta.
         """
-        tokens, full_mask = self.encode(
+        tokens = self.encode(
             entity_features, entity_type_ids, threat_features,
             entity_mask, threat_mask, position_features, position_mask,
         )
@@ -220,46 +266,35 @@ class EntityEncoderNextState(nn.Module):
         n_entities = entity_features.shape[1]
         entity_tokens = tokens[:, :n_entities]  # (B, E, d_model)
 
-        # Broadcast delta to each entity token
+        # Broadcast delta
         delta_feat = delta_normalized.unsqueeze(-1).unsqueeze(-1).expand(
-            -1, n_entities, 1
-        )  # (B, E, 1)
+            -1, n_entities, 1,
+        )
         conditioned = torch.cat([entity_tokens, delta_feat], dim=-1)  # (B, E, d_model+1)
 
-        out = self.state_head(conditioned)  # (B, E, 60)
-        mean_delta, log_var = out.split(ENTITY_DIM, dim=-1)  # each (B, E, 30)
+        results = {}
+        for name, indices in DYNAMIC_GROUPS.items():
+            if name in BCE_GROUPS:
+                # Binary head: returns logits directly
+                logits = self.heads[name](conditioned)
+                results[name] = logits  # (B, E, n_features)
+            else:
+                mean_delta, log_var = self.heads[name](conditioned)
+                # Residual in symlog space
+                current_symlog = symlog(entity_features[:, :, indices])
+                mean = current_symlog + mean_delta
+                results[name] = (mean, log_var)
 
-        # Clamp log_var to prevent numerical issues
-        log_var = log_var.clamp(-10.0, 10.0)
-
-        # Residual in symlog space: predict delta from current symlog state
-        mean = symlog(entity_features) + mean_delta
-
-        return mean, log_var
+        return results
 
 
 # ---------------------------------------------------------------------------
-# Dataset
+# Dataset (unchanged from previous version)
 # ---------------------------------------------------------------------------
 
 
 class NextStateDataset:
-    """Loads pre-processed .npz next-state dataset.
-
-    Npz format:
-        ent_feat: (N, MAX_ENTS, 30)
-        ent_types: (N, MAX_ENTS)
-        ent_mask: (N, MAX_ENTS) — True = padding
-        ent_unit_ids: (N, MAX_ENTS) — unit ID per slot, -1 = padding
-        thr_feat: (N, MAX_THR, 8)
-        thr_mask: (N, MAX_THR)
-        pos_feat: (N, MAX_POS, 8)
-        pos_mask: (N, MAX_POS)
-        uhp_ids: (N, MAX_UNITS) — unit IDs for HP lookup, -1 = padding
-        uhp_vals: (N, MAX_UNITS) — HP ratios
-        ticks: (N,) — tick number
-        scenario_ids: (N,) — integer scenario ID
-    """
+    """Loads pre-processed .npz next-state dataset."""
 
     def __init__(self, path: Path, max_samples: int = 0):
         if path.suffix != ".npz":
@@ -267,8 +302,7 @@ class NextStateDataset:
             if npz_path.exists():
                 path = npz_path
             else:
-                raise ValueError(f"Expected .npz file, got {path}. "
-                                 "Convert JSONL first.")
+                raise ValueError(f"Expected .npz file, got {path}")
 
         data = np.load(path)
         self.ent_feat = data["ent_feat"]
@@ -279,8 +313,6 @@ class NextStateDataset:
         self.thr_mask = data["thr_mask"]
         self.pos_feat = data["pos_feat"]
         self.pos_mask = data["pos_mask"]
-        self.uhp_ids = data["uhp_ids"]
-        self.uhp_vals = data["uhp_vals"]
         self.ticks = data["ticks"]
         self.scenario_ids = data["scenario_ids"]
 
@@ -289,7 +321,6 @@ class NextStateDataset:
             idx.sort()
             self._slice(idx)
 
-        # Build per-scenario sorted indices for pairing
         self._build_scenario_index()
 
         n = len(self.ticks)
@@ -308,22 +339,17 @@ class NextStateDataset:
         self.thr_mask = self.thr_mask[idx]
         self.pos_feat = self.pos_feat[idx]
         self.pos_mask = self.pos_mask[idx]
-        self.uhp_ids = self.uhp_ids[idx]
-        self.uhp_vals = self.uhp_vals[idx]
         self.ticks = self.ticks[idx]
         self.scenario_ids = self.scenario_ids[idx]
 
     def _build_scenario_index(self):
-        """Group indices by scenario, sorted by tick within each group."""
         self._scenario_groups: dict[int, np.ndarray] = {}
         for sc_id in np.unique(self.scenario_ids):
             mask = self.scenario_ids == sc_id
             indices = np.where(mask)[0]
-            # Sort by tick
             order = np.argsort(self.ticks[indices])
             self._scenario_groups[int(sc_id)] = indices[order]
 
-        # Flat index: (scenario_id, position_in_group)
         self._flat_index: list[tuple[int, int]] = []
         for sc_id, indices in self._scenario_groups.items():
             for pos in range(len(indices)):
@@ -333,7 +359,6 @@ class NextStateDataset:
         return len(self._flat_index)
 
     def split(self, val_frac: float = 0.15) -> tuple["NextStateDataset", "NextStateDataset"]:
-        """Split by scenario to prevent data leakage."""
         scenario_ids_list = list(self._scenario_groups.keys())
         random.shuffle(scenario_ids_list)
         n_val = max(1, int(len(scenario_ids_list) * val_frac))
@@ -353,11 +378,8 @@ class NextStateDataset:
             ds.thr_mask = parent.thr_mask
             ds.pos_feat = parent.pos_feat
             ds.pos_mask = parent.pos_mask
-            ds.uhp_ids = parent.uhp_ids
-            ds.uhp_vals = parent.uhp_vals
             ds.ticks = parent.ticks
             ds.scenario_ids = parent.scenario_ids
-            # Rebuild scenario groups for this subset
             ds._scenario_groups = {}
             for sc_id in np.unique(parent.scenario_ids[idx]):
                 sc_idx = idx[parent.scenario_ids[idx] == sc_id]
@@ -376,81 +398,81 @@ class NextStateDataset:
               f"{len(val_ds)} val ({len(val_ds._scenario_groups)} scenarios)")
         return train_ds, val_ds
 
-    def _find_future(self, sc_id: int, pos: int, delta: int) -> int | None:
-        """Find index of snapshot at tick T+delta in the same scenario."""
-        group = self._scenario_groups[sc_id]
-        idx_now = group[pos]
-        t_now = self.ticks[idx_now]
-        t_target = t_now + delta
+    def precompute_pairs(self, min_delta: int, max_delta: int):
+        """Precompute all valid (now, future) pairs and target features.
 
-        # Linear scan forward (group is sorted by tick)
-        for future_pos in range(pos + 1, len(group)):
-            future_idx = group[future_pos]
-            if self.ticks[future_idx] >= t_target:
-                return future_idx
-        return None
-
-    def _build_targets(self, idx_now: int, idx_future: int, max_delta: int, delta: int):
-        """Build per-entity full feature targets by matching unit IDs."""
+        Call once before training. After this, sample_batch just indexes
+        into flat precomputed arrays — no per-step unit_id matching.
+        """
         MAX_ENTS = self.ent_feat.shape[1]
-        target_feat = np.zeros((MAX_ENTS, ENTITY_DIM), dtype=np.float32)
+        now_list = []
+        target_list = []
+        delta_list = []
 
-        # Build future feature lookup: unit_id → 30-dim features
-        future_feats = {}
-        for j in range(MAX_ENTS):
-            uid = self.ent_unit_ids[idx_future, j]
-            if uid < 0:
-                break
-            future_feats[uid] = self.ent_feat[idx_future, j]
+        for sc_id, group in self._scenario_groups.items():
+            for pos in range(len(group)):
+                idx_now = group[pos]
+                t_now = self.ticks[idx_now]
 
-        # Match each entity's unit_id to its future features
-        for j in range(MAX_ENTS):
-            uid = self.ent_unit_ids[idx_now, j]
-            if uid < 0:
-                break
-            if uid in future_feats:
-                target_feat[j] = future_feats[uid]
-            # else: unit died or left — target stays zeros (hp=0, exists=0)
+                for delta in range(min_delta, max_delta + 1):
+                    t_target = t_now + delta
+                    # Find first snapshot >= t_target
+                    future_idx = None
+                    for fp in range(pos + 1, len(group)):
+                        if self.ticks[group[fp]] >= t_target:
+                            future_idx = group[fp]
+                            break
+                    if future_idx is None:
+                        continue
 
-        return target_feat, delta / max_delta
+                    # Build aligned target via unit_id matching
+                    target_feat = np.zeros((MAX_ENTS, ENTITY_DIM), dtype=np.float32)
+                    future_feats = {}
+                    for j in range(MAX_ENTS):
+                        uid = self.ent_unit_ids[future_idx, j]
+                        if uid < 0:
+                            break
+                        future_feats[uid] = self.ent_feat[future_idx, j]
+                    for j in range(MAX_ENTS):
+                        uid = self.ent_unit_ids[idx_now, j]
+                        if uid < 0:
+                            break
+                        if uid in future_feats:
+                            target_feat[j] = future_feats[uid]
+
+                    actual_delta = int(self.ticks[future_idx] - t_now)
+                    now_list.append(idx_now)
+                    target_list.append(target_feat)
+                    delta_list.append(actual_delta / max_delta)
+
+        self._pre_now = np.array(now_list)
+        self._pre_targets = np.array(target_list)
+        self._pre_deltas = np.array(delta_list, dtype=np.float32)
+
+        n = len(self._pre_now)
+        print(f"Precomputed {n} pairs ({n / len(self._flat_index):.1f}x snapshots)")
+
+    @staticmethod
+    def _augment_ent(raw: np.ndarray) -> np.ndarray:
+        """Add relative position features (dx, dy from self) per batch."""
+        self_x = raw[:, 0:1, 5:6]
+        self_y = raw[:, 0:1, 6:7]
+        return np.concatenate([
+            raw,
+            raw[:, :, 5:6] - self_x,
+            raw[:, :, 6:7] - self_y,
+        ], axis=-1)
 
     def sample_batch(
-        self, batch_size: int, min_delta: int = 5, max_delta: int = 40,
+        self, batch_size: int, min_delta: int = 1, max_delta: int = 5,
     ) -> dict[str, torch.Tensor] | None:
-        pairs = []
-        attempts = 0
-        while len(pairs) < batch_size and attempts < batch_size * 3:
-            attempts += 1
-            sc_id, pos = random.choice(self._flat_index)
-            delta = random.randint(min_delta, max_delta)
-            future_idx = self._find_future(sc_id, pos, delta)
-            if future_idx is not None:
-                now_idx = self._scenario_groups[sc_id][pos]
-                actual_delta = int(self.ticks[future_idx] - self.ticks[now_idx])
-                pairs.append((now_idx, future_idx, actual_delta))
-
-        if len(pairs) < 2:
-            return None
-
-        return self._collate(pairs, max_delta)
-
-    def _collate(self, pairs: list[tuple[int, int, int]], max_delta: int):
-        B = len(pairs)
-        MAX_ENTS = self.ent_feat.shape[1]
-
-        now_indices = np.array([p[0] for p in pairs])
-
-        target_feat = np.zeros((B, MAX_ENTS, ENTITY_DIM), dtype=np.float32)
-        deltas = np.zeros(B, dtype=np.float32)
-
-        for i, (now_idx, future_idx, delta) in enumerate(pairs):
-            feat, d_norm = self._build_targets(now_idx, future_idx, max_delta, delta)
-            target_feat[i] = feat
-            deltas[i] = d_norm
+        idx = np.random.randint(0, len(self._pre_now), size=batch_size)
+        now_indices = self._pre_now[idx]
 
         return {
             "entity_features": torch.tensor(
-                self.ent_feat[now_indices], dtype=torch.float, device=DEVICE),
+                self._augment_ent(self.ent_feat[now_indices]),
+                dtype=torch.float, device=DEVICE),
             "entity_type_ids": torch.tensor(
                 self.ent_types[now_indices], dtype=torch.long, device=DEVICE),
             "threat_features": torch.tensor(
@@ -463,33 +485,43 @@ class NextStateDataset:
                 self.pos_feat[now_indices], dtype=torch.float, device=DEVICE),
             "position_mask": torch.tensor(
                 self.pos_mask[now_indices], device=DEVICE),
-            "target_features": torch.tensor(target_feat, dtype=torch.float, device=DEVICE),
-            "delta_normalized": torch.tensor(deltas, device=DEVICE),
+            "target_features": torch.tensor(
+                self._pre_targets[idx], dtype=torch.float, device=DEVICE),
+            "delta_normalized": torch.tensor(
+                self._pre_deltas[idx], device=DEVICE),
         }
 
     def iter_batches(
-        self, batch_size: int, min_delta: int = 5, max_delta: int = 40,
+        self, batch_size: int, min_delta: int = 1, max_delta: int = 5,
     ):
-        indices = list(range(len(self._flat_index)))
-        random.shuffle(indices)
-
-        pairs = []
-        for idx in indices:
-            sc_id, pos = self._flat_index[idx]
-            delta = random.randint(min_delta, max_delta)
-            future_idx = self._find_future(sc_id, pos, delta)
-            if future_idx is None:
+        """Iterate all precomputed pairs in shuffled order."""
+        indices = np.random.permutation(len(self._pre_now))
+        for start in range(0, len(indices), batch_size):
+            idx = indices[start:start + batch_size]
+            if len(idx) < 2:
                 continue
-            now_idx = self._scenario_groups[sc_id][pos]
-            actual_delta = int(self.ticks[future_idx] - self.ticks[now_idx])
-            pairs.append((now_idx, future_idx, actual_delta))
-
-            if len(pairs) >= batch_size:
-                yield self._collate(pairs, max_delta)
-                pairs = []
-
-        if pairs:
-            yield self._collate(pairs, max_delta)
+            now_indices = self._pre_now[idx]
+            yield {
+                "entity_features": torch.tensor(
+                    self._augment_ent(self.ent_feat[now_indices]),
+                    dtype=torch.float, device=DEVICE),
+                "entity_type_ids": torch.tensor(
+                    self.ent_types[now_indices], dtype=torch.long, device=DEVICE),
+                "threat_features": torch.tensor(
+                    self.thr_feat[now_indices], dtype=torch.float, device=DEVICE),
+                "entity_mask": torch.tensor(
+                    self.ent_mask[now_indices], device=DEVICE),
+                "threat_mask": torch.tensor(
+                    self.thr_mask[now_indices], device=DEVICE),
+                "position_features": torch.tensor(
+                    self.pos_feat[now_indices], dtype=torch.float, device=DEVICE),
+                "position_mask": torch.tensor(
+                    self.pos_mask[now_indices], device=DEVICE),
+                "target_features": torch.tensor(
+                    self._pre_targets[idx], dtype=torch.float, device=DEVICE),
+                "delta_normalized": torch.tensor(
+                    self._pre_deltas[idx], device=DEVICE),
+            }
 
 
 # ---------------------------------------------------------------------------
@@ -505,15 +537,36 @@ def train(args: argparse.Namespace):
     dataset = NextStateDataset(Path(args.dataset), max_samples=args.max_samples)
     train_ds, val_ds = dataset.split(val_frac=args.val_frac)
 
-    model = EntityEncoderNextState(
+    print("Precomputing pairs...")
+    train_ds.precompute_pairs(args.min_delta, args.max_delta)
+    val_ds.precompute_pairs(args.min_delta, args.max_delta)
+
+    model = EntityEncoderDecomposed(
         d_model=args.d_model,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
     ).to(DEVICE)
 
+    # Warm-start encoder from Phase 1 checkpoint if provided
+    if args.warm_start:
+        state = torch.load(args.warm_start, map_location=DEVICE, weights_only=True)
+        model_state = model.state_dict()
+        loaded = 0
+        for k, v in state.items():
+            # Only load encoder weights (not old state_head)
+            if k.startswith("encoder.") and k in model_state and model_state[k].shape == v.shape:
+                model_state[k] = v
+                loaded += 1
+        model.load_state_dict(model_state)
+        print(f"Warm-started encoder from {args.warm_start} ({loaded} params loaded)")
+
     n_params = sum(p.numel() for p in model.parameters())
     n_encoder = sum(p.numel() for p in model.encoder.parameters())
-    print(f"Model: {n_params:,} total, encoder: {n_encoder:,}")
+    n_heads = sum(p.numel() for p in model.heads.parameters())
+    print(f"Model: {n_params:,} total, encoder: {n_encoder:,}, heads: {n_heads:,}")
+    for name, head in model.heads.items():
+        hp = sum(p.numel() for p in head.parameters())
+        print(f"  {name}: {hp} params ({len(DYNAMIC_GROUPS[name])} features)")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -521,7 +574,7 @@ def train(args: argparse.Namespace):
         betas=(0.9, 0.98),
         weight_decay=args.weight_decay,
     )
-    warmup = torch.optim.lr_scheduler.LinearLR(
+    warmup_sched = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=0.1, end_factor=1.0, total_iters=10,
     )
 
@@ -531,44 +584,34 @@ def train(args: argparse.Namespace):
     log_path = Path(args.output).with_suffix(".csv")
     log_file = open(log_path, "w", newline="")
     log_writer = csv.writer(log_file)
-    # Feature names for per-feature MAE reporting
-    FEATURE_GROUPS = {
-        "hp": [0], "shield": [1], "resource": [2],
-        "pos": [5, 6], "dist": [7],
-        "combat": [12, 13, 14],
-        "ability_cd": [17], "heal_cd": [20], "cc_cd": [23],
-        "state": [24, 25, 26, 27],
-        "exists": [29],
-    }
 
+    group_names = list(DYNAMIC_GROUPS.keys())
     log_writer.writerow([
-        "step", "train_loss", "val_mse", "val_mae",
-        "val_hp_mae", "val_pos_mae", "val_cd_mae", "val_exists_mae",
-        "baseline_mae", "weight_norm", "grad_norm", "lr", "elapsed_s",
+        "step", "train_loss",
+        *[f"L_{g}" for g in group_names],
+        *[f"tw_{g}" for g in group_names],
+        *[f"val_mae_{g}" for g in group_names],
+        *[f"base_mae_{g}" for g in group_names],
+        "val_mae_all", "baseline_mae_all",
+        "weight_norm", "grad_norm", "lr", "elapsed_s",
     ])
 
-    best_metric = float("inf")  # full state MAE, lower is better
+    best_metric = float("inf")
     start_time = time.time()
     model.train()
 
-    # Sliding window: start with short deltas, expand to full range over warmup period
-    delta_warmup_steps = args.max_steps // 4  # first 25% of training
+    # Fixed delta range — no curriculum, train at target range directly
     def get_delta_range(step: int) -> tuple[int, int]:
-        if step >= delta_warmup_steps:
-            return args.min_delta, args.max_delta
-        progress = step / delta_warmup_steps
-        current_max = args.min_delta + int((args.max_delta - args.min_delta) * progress)
-        return args.min_delta, max(current_max, args.min_delta + 1)
+        return args.min_delta, args.max_delta
 
     beta = args.beta_nll
 
-    print(f"\nStarting next-state prediction pre-training: max_steps={args.max_steps}")
-    print(f"Predicting full 30-dim entity state at T+delta (symlog + beta-NLL)")
-    print(f"Delta range: [{args.min_delta}, {args.max_delta}] ticks "
-          f"(sliding warmup over {delta_warmup_steps} steps)")
-    print(f"Beta-NLL beta={beta}")
-    print(f"Weight decay={args.weight_decay}, lr={args.lr}")
-    print(f"Grokfast EMA: alpha={args.grokfast_alpha}, lamb={args.grokfast_lamb}")
+    print(f"\nDecomposed next-state prediction: max_steps={args.max_steps}")
+    print(f"Dynamic features: {N_DYNAMIC} dims in {len(DYNAMIC_GROUPS)} groups")
+    for name, indices in DYNAMIC_GROUPS.items():
+        print(f"  {name}: indices {indices}")
+    print(f"Delta range: [{args.min_delta}, {args.max_delta}] ticks (fixed)")
+    print(f"Beta-NLL beta={beta}, Weight decay={args.weight_decay}, lr={args.lr}")
     print(f"Device: {DEVICE}\n")
 
     for step in range(1, args.max_steps + 1):
@@ -580,22 +623,52 @@ def train(args: argparse.Namespace):
             print("WARNING: Failed to sample batch, skipping step")
             continue
 
-        mean, log_var = model(
+        predictions = model(
             batch["entity_features"], batch["entity_type_ids"],
             batch["threat_features"], batch["entity_mask"], batch["threat_mask"],
             batch["delta_normalized"],
             batch["position_features"], batch["position_mask"],
         )
 
-        # Symlog targets
-        target_symlog = symlog(batch["target_features"])
+        valid = ~batch["entity_mask"]  # (B, E)
 
-        # Mask: only compute loss on real entities (not padding)
-        valid = ~batch["entity_mask"]  # (B, E) True = real entity
-        valid_3d = valid.unsqueeze(-1).expand_as(mean)  # (B, E, 30)
+        # Per-group losses
+        group_losses = {}
+        # Get exists target for hp masking (only train hp where target is alive)
+        target_exists = batch["target_features"][:, :, 29]  # (B, E)
+        for i, (name, indices) in enumerate(DYNAMIC_GROUPS.items()):
+            if name in BCE_GROUPS:
+                # BCE loss for binary features
+                logits = predictions[name]
+                target_bin = batch["target_features"][:, :, indices]
+                valid_exp = valid.unsqueeze(-1).expand_as(logits)
+                group_losses[name] = F.binary_cross_entropy_with_logits(
+                    logits[valid_exp], target_bin[valid_exp],
+                )
+            else:
+                mean, log_var = predictions[name]
+                target = symlog(batch["target_features"][:, :, indices])
 
-        loss = beta_nll_loss(
-            mean[valid_3d], log_var[valid_3d], target_symlog[valid_3d], beta=beta,
+                # For hp group: mask out entities that die (target exists=0)
+                # — predicting hp of dead entities is meaningless noise
+                if name == "hp":
+                    alive_mask = valid & (target_exists > 0.5)  # (B, E)
+                    valid_exp = alive_mask.unsqueeze(-1).expand_as(mean)
+                else:
+                    valid_exp = valid.unsqueeze(-1).expand_as(mean)
+
+                if valid_exp.any():
+                    group_losses[name] = beta_nll_loss(
+                        mean[valid_exp], log_var[valid_exp], target[valid_exp], beta=beta,
+                    )
+                else:
+                    group_losses[name] = torch.tensor(0.0, device=mean.device)
+
+        # Fixed per-group loss weights (cd too noisy, state low signal)
+        GROUP_LOSS_WEIGHTS = {"hp": 0.0, "pos": 1.0, "cd": 0.0, "state": 0.1, "exists": 1.0}
+        loss = sum(
+            GROUP_LOSS_WEIGHTS[name] * group_losses[name]
+            for name in group_names
         )
 
         optimizer.zero_grad()
@@ -604,62 +677,73 @@ def train(args: argparse.Namespace):
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         if step <= 10:
-            warmup.step()
+            warmup_sched.step()
 
         if step % args.eval_every == 0:
             model.eval()
 
-            all_errors = []  # (N_valid, 30)
-            all_baseline_errors = []  # naive: predict current state = future state
-            all_mean_var = []  # track learned variance
+            # Accumulate per-group error sums (vectorized)
+            group_err_sum: dict[str, float] = {g: 0.0 for g in group_names}
+            group_base_sum: dict[str, float] = {g: 0.0 for g in group_names}
+            group_count: dict[str, int] = {g: 0 for g in group_names}
 
             for vb in val_ds.iter_batches(
                 batch_size, min_delta=args.min_delta, max_delta=args.max_delta,
             ):
                 with torch.no_grad():
-                    vmean, vlog_var = model(
+                    vpreds = model(
                         vb["entity_features"], vb["entity_type_ids"],
                         vb["threat_features"], vb["entity_mask"], vb["threat_mask"],
                         vb["delta_normalized"],
                         vb["position_features"], vb["position_mask"],
                     )
-                    # Convert predictions back from symlog to original space
-                    vpred = symexp(vmean)
-                    vtarget_symlog = symlog(vb["target_features"])
 
-                valid = ~vb["entity_mask"]  # (B, E)
-                # Per-entity errors in original space for interpretable MAE
-                for i in range(valid.shape[0]):
-                    for j in range(valid.shape[1]):
-                        if valid[i, j]:
-                            err = (vpred[i, j] - vb["target_features"][i, j]).abs()
-                            all_errors.append(err)
-                            baseline_err = (vb["entity_features"][i, j] - vb["target_features"][i, j]).abs()
-                            all_baseline_errors.append(baseline_err)
-                            all_mean_var.append(vlog_var[i, j].exp())
+                vvalid = ~vb["entity_mask"]  # (B, E)
+                vtarget_exists = vb["target_features"][:, :, 29]
 
-            if not all_errors:
+                for name, indices in DYNAMIC_GROUPS.items():
+                    vtarget_orig = vb["target_features"][:, :, indices]
+                    vcurrent_orig = vb["entity_features"][:, :, indices]
+
+                    if name in BCE_GROUPS:
+                        vpred_orig = torch.sigmoid(vpreds[name])
+                    else:
+                        vmean, _ = vpreds[name]
+                        vpred_orig = symexp(vmean)
+
+                    # Build mask: valid entities, plus alive-only for hp
+                    mask = vvalid  # (B, E)
+                    if name == "hp":
+                        mask = mask & (vtarget_exists > 0.5)
+
+                    mask_exp = mask.unsqueeze(-1).expand_as(vpred_orig)  # (B, E, F)
+                    n = mask_exp.sum().item()
+                    if n > 0:
+                        group_err_sum[name] += (vpred_orig - vtarget_orig).abs()[mask_exp].sum().item()
+                        group_base_sum[name] += (vcurrent_orig - vtarget_orig).abs()[mask_exp].sum().item()
+                        group_count[name] += int(n)
+
+            if group_count["exists"] == 0:
                 model.train()
                 continue
 
-            errors = torch.stack(all_errors)  # (N, 30)
-            baseline = torch.stack(all_baseline_errors)  # (N, 30)
-            mean_var = torch.stack(all_mean_var).mean(dim=0)  # (30,) avg variance per feature
+            # Compute per-group MAE
+            val_maes = {}
+            base_maes = {}
+            for name in group_names:
+                if group_count[name] > 0:
+                    val_maes[name] = group_err_sum[name] / group_count[name]
+                    base_maes[name] = group_base_sum[name] / group_count[name]
+                else:
+                    val_maes[name] = 0.0
+                    base_maes[name] = 0.0
 
-            val_mae = errors.mean().item()
-            baseline_mae = baseline.mean().item()
+            # Overall MAE as mean of per-group MAEs (groups may have different sample counts)
+            val_mae_all = sum(val_maes[g] for g in group_names) / len(group_names)
+            base_mae_all = sum(base_maes[g] for g in group_names) / len(group_names)
 
-            # Per-group MAE
-            hp_mae = errors[:, FEATURE_GROUPS["hp"]].mean().item()
-            pos_mae = errors[:, FEATURE_GROUPS["pos"]].mean().item()
-            cd_indices = FEATURE_GROUPS["ability_cd"] + FEATURE_GROUPS["heal_cd"] + FEATURE_GROUPS["cc_cd"]
-            cd_mae = errors[:, cd_indices].mean().item()
-            exists_mae = errors[:, FEATURE_GROUPS["exists"]].mean().item()
-
-            # Learned variance summary: show which features the model thinks are noisy
-            hp_var = mean_var[FEATURE_GROUPS["hp"]].mean().item()
-            pos_var = mean_var[FEATURE_GROUPS["pos"]].mean().item()
-            cd_var = mean_var[cd_indices].mean().item()
+            # Task weights (fixed)
+            tw = GROUP_LOSS_WEIGHTS
 
             weight_norm = sum(
                 p.data.norm().item() ** 2 for p in model.parameters()
@@ -669,29 +753,35 @@ def train(args: argparse.Namespace):
             lr = optimizer.param_groups[0]["lr"]
 
             log_writer.writerow([
-                step, f"{loss.item():.6f}", f"{loss.item():.6f}",
-                f"{val_mae:.4f}", f"{hp_mae:.4f}", f"{pos_mae:.4f}",
-                f"{cd_mae:.4f}", f"{exists_mae:.4f}",
-                f"{baseline_mae:.4f}", f"{weight_norm:.4f}",
-                f"{grad_norm:.4f}", f"{lr:.6f}", f"{elapsed:.1f}",
+                step, f"{loss.item():.6f}",
+                *[f"{group_losses[g].item():.6f}" for g in group_names],
+                *[f"{tw[g]:.4f}" for g in group_names],
+                *[f"{val_maes[g]:.4f}" for g in group_names],
+                *[f"{base_maes[g]:.4f}" for g in group_names],
+                f"{val_mae_all:.4f}", f"{base_mae_all:.4f}",
+                f"{weight_norm:.4f}", f"{grad_norm:.4f}", f"{lr:.6f}", f"{elapsed:.1f}",
             ])
             log_file.flush()
 
             marker = ""
-            if val_mae < best_metric:
-                best_metric = val_mae
+            if val_mae_all < best_metric:
+                best_metric = val_mae_all
                 torch.save(model.state_dict(), args.output)
                 marker = " *"
 
-            improvement = (1 - val_mae / baseline_mae) * 100 if baseline_mae > 0 else 0
+            # Per-group improvement summary
+            parts = []
+            for name in group_names:
+                imp = (1 - val_maes[name] / base_maes[name]) * 100 if base_maes[name] > 0 else 0
+                parts.append(f"{name} {val_maes[name]:.4f}({imp:+.0f}%)")
+
+            overall_imp = (1 - val_mae_all / base_mae_all) * 100 if base_mae_all > 0 else 0
             print(
                 f"step {step:>7d} | "
                 f"loss {loss.item():.4f} | "
-                f"val_mae {val_mae:.4f} (base {baseline_mae:.4f}, {improvement:+.1f}%) | "
-                f"hp {hp_mae:.4f} pos {pos_mae:.4f} cd {cd_mae:.4f} | "
-                f"var hp={hp_var:.3f} pos={pos_var:.3f} cd={cd_var:.3f} | "
-                f"delta [{cur_min},{cur_max}] | "
-                f"w {weight_norm:.1f}"
+                f"mae {val_mae_all:.4f} (base {base_mae_all:.4f}, {overall_imp:+.1f}%) | "
+                f"{' '.join(parts)} | "
+                f"delta [{cur_min},{cur_max}]"
                 f"{marker}"
             )
 
@@ -700,20 +790,19 @@ def train(args: argparse.Namespace):
     log_file.close()
     elapsed = time.time() - start_time
     print(f"\nTraining complete. {step} steps in {elapsed:.0f}s")
-    print(f"Best val state MAE: {best_metric:.4f}")
+    print(f"Best val MAE (dynamic features): {best_metric:.4f}")
     print(f"Model saved to {args.output}")
     print(f"Metrics saved to {log_path}")
 
 
 def main():
     p = argparse.ArgumentParser(
-        description="Pre-train entity encoder V3 on next-state prediction"
+        description="Pre-train entity encoder with decomposed next-state prediction"
     )
-    p.add_argument("dataset", help=".npz next-state dataset (or .jsonl, auto-detects .npz)")
+    p.add_argument("dataset", help=".npz next-state dataset")
     p.add_argument("-o", "--output", default="generated/entity_encoder_nextstate.pt")
 
-    p.add_argument("--max-samples", type=int, default=0,
-                    help="Max samples to load (0 = all)")
+    p.add_argument("--max-samples", type=int, default=0)
 
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1.0)
@@ -722,17 +811,19 @@ def main():
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--val-frac", type=float, default=0.15)
 
-    p.add_argument("--min-delta", type=int, default=5,
-                    help="Min prediction horizon in ticks")
-    p.add_argument("--max-delta", type=int, default=40,
-                    help="Max prediction horizon in ticks")
+    p.add_argument("--min-delta", type=int, default=1,
+                    help="Min prediction horizon in ticks (default: 1)")
+    p.add_argument("--max-delta", type=int, default=10,
+                    help="Max prediction horizon in ticks (default: 10)")
 
     p.add_argument("--d-model", type=int, default=32)
     p.add_argument("--n-heads", type=int, default=4)
     p.add_argument("--n-layers", type=int, default=4)
 
-    p.add_argument("--beta-nll", type=float, default=0.5,
-                    help="Beta for beta-NLL loss (0.5 recommended)")
+    p.add_argument("--beta-nll", type=float, default=0.5)
+
+    p.add_argument("--warm-start", type=str, default=None,
+                    help="Path to checkpoint to warm-start encoder from")
 
     p.add_argument("--grokfast-alpha", type=float, default=0.98)
     p.add_argument("--grokfast-lamb", type=float, default=2.0)

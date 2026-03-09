@@ -351,6 +351,11 @@ pub fn run_nextstate_dataset(args: crate::cli::NextstateDatasetArgs) -> ExitCode
     let file = std::fs::File::create(&args.output).expect("Failed to create output file");
     let writer = std::sync::Mutex::new(std::io::BufWriter::new(file));
 
+    // Ability registry file alongside the main dataset
+    let registry_path = args.output.with_extension("registry.jsonl");
+    let registry_file = std::fs::File::create(&registry_path).expect("Failed to create registry file");
+    let registry_writer = std::sync::Mutex::new(std::io::BufWriter::new(registry_file));
+
     let sample_interval = args.sample_interval;
     let done = std::sync::atomic::AtomicUsize::new(0);
     let total_samples = std::sync::atomic::AtomicUsize::new(0);
@@ -368,6 +373,12 @@ pub fn run_nextstate_dataset(args: crate::cli::NextstateDatasetArgs) -> ExitCode
                 serde_json::to_writer(&mut *w, &sample).unwrap();
                 writeln!(&mut *w).unwrap();
             },
+            |registry| {
+                use std::io::Write;
+                let mut w = registry_writer.lock().unwrap();
+                serde_json::to_writer(&mut *w, &registry).unwrap();
+                writeln!(&mut *w).unwrap();
+            },
         );
 
         total_samples.fetch_add(n_samples, std::sync::atomic::Ordering::Relaxed);
@@ -382,6 +393,7 @@ pub fn run_nextstate_dataset(args: crate::cli::NextstateDatasetArgs) -> ExitCode
     let t = total_samples.load(std::sync::atomic::Ordering::Relaxed);
     eprintln!("\nTotal: {} samples from {} scenarios", t, n_scenarios);
     eprintln!("Written to: {}", args.output.display());
+    eprintln!("Ability registry: {}", registry_path.display());
 
     ExitCode::SUCCESS
 }

@@ -546,7 +546,15 @@ OFF_RELOAD_ACK  = 0x184    # was 0xC4</code></pre>
 
 <hr>
 
-<p class="footer-note">Training is still running. With proper weight reload, we&rsquo;re seeing the first sustained learning curve in the project&rsquo;s history. Phase 2 is at 48% eval win rate with KL still decreasing &mdash; healthy convergence across harder scenarios. The curriculum has 2 more phases to go.</p>
+<h2>Where Things Stand</h2>
+
+<p>With proper weight reload, EC3 showed the first sustained learning curve in the project&rsquo;s history: KL <em>decreasing</em> over 20 iterations (0.095 &rarr; 0.068), a value head that actually learns, and 48% eval win rate on the Phase 2 scenario set &mdash; up from 37% at the BC baseline.</p>
+
+<p>The full 4-phase curriculum is still in progress. The earlier phases (autoattack-only, simple kits) show clean convergence, but Phase 4 &mdash; all 474 scenarios including stress tests &mdash; remains the real benchmark. We&rsquo;re also exploring whether the experiment plan&rsquo;s remaining ideas (entropy penalties, advantage clipping, value head warmup) can push the ceiling higher now that the foundation is sound.</p>
+
+<p>The core thesis holds: a 113K-parameter model, trained via IMPALA with behavioral embeddings and a curriculum, can learn tactical combat decisions across nearly a thousand unique abilities. The gap between &ldquo;it works on paper&rdquo; and &ldquo;it works in practice&rdquo; turned out to be a single missing GPU weight reload &mdash; four bytes in a shared memory flag that determined whether the behavior policy matched reality.</p>
+
+<p class="footer-note" style="margin-top: 2rem; font-style: italic; color: var(--text-muted);">This work was done over 4 days in March 2026. Code, scenario definitions, and training infrastructure are all in a single Rust + Python repository.</p>
 
 </div>
 

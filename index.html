@@ -546,13 +546,11 @@ OFF_RELOAD_ACK  = 0x184    # was 0xC4</code></pre>
 
 <hr>
 
-<h2>Where Things Stand</h2>
+<h2>What&rsquo;s Next: League Training</h2>
 
-<p>With proper weight reload, EC3 showed the first sustained learning curve in the project&rsquo;s history: KL <em>decreasing</em> over 20 iterations (0.095 &rarr; 0.068), a value head that actually learns, and 48% eval win rate on the Phase 2 scenario set &mdash; up from 37% at the BC baseline.</p>
+<p>With EC3, the core concept is proved: a 113K-parameter model trained via IMPALA with behavioral embeddings can learn tactical combat decisions across 943 unique abilities. KL decreases over training, the value head sustains learning, and win rate climbs above the BC baseline. The gap between &ldquo;it works on paper&rdquo; and &ldquo;it works in practice&rdquo; turned out to be four bytes in a shared memory flag.</p>
 
-<p>The full 4-phase curriculum is still in progress. The earlier phases (autoattack-only, simple kits) show clean convergence, but Phase 4 &mdash; all 474 scenarios including stress tests &mdash; remains the real benchmark. We&rsquo;re also exploring whether the experiment plan&rsquo;s remaining ideas (entropy penalties, advantage clipping, value head warmup) can push the ceiling higher now that the foundation is sound.</p>
-
-<p>The core thesis holds: a 113K-parameter model, trained via IMPALA with behavioral embeddings and a curriculum, can learn tactical combat decisions across nearly a thousand unique abilities. The gap between &ldquo;it works on paper&rdquo; and &ldquo;it works in practice&rdquo; turned out to be a single missing GPU weight reload &mdash; four bytes in a shared memory flag that determined whether the behavior policy matched reality.</p>
+<p>The next step is <strong>league training</strong>. Instead of training a single policy against a fixed opponent, we&rsquo;ll maintain a population of agents that play against each other &mdash; similar to AlphaStar&rsquo;s league. Agents that exploit a specific weakness get countered by new agents trained specifically against that exploit. The result is a policy that generalizes rather than overfits to one opponent&rsquo;s tendencies. The IMPALA infrastructure &mdash; 4,096 parallel sims, SHM GPU inference, behavioral embeddings &mdash; transfers directly; the main addition is matchmaking and population management.</p>
 
 <p class="footer-note" style="margin-top: 2rem; font-style: italic; color: var(--text-muted);">This work was done over 4 days in March 2026. Code, scenario definitions, and training infrastructure are all in a single Rust + Python repository.</p>
 

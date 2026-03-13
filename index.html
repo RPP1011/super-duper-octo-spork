@@ -299,7 +299,7 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 
 <header>
   <h1>IMPALA V4: Behavioral Embeddings, V-Trace, and a SHM Bug</h1>
-  <p class="subtitle">How a 113K-parameter actor-critic learns to command squads of heroes with arbitrary abilities &mdash; and how a 4-byte bug hid inside a shared-memory inference server.</p>
+  <p class="subtitle">How a 113K-parameter actor-critic learns to command squads of units with arbitrary abilities &mdash; and how a 4-byte bug hid inside a shared-memory inference server.</p>
   <div class="stats">
     <div class="stat"><div class="value">113K</div><div class="label">Parameters</div></div>
     <div class="stat"><div class="value">943</div><div class="label">Unique Abilities</div></div>
@@ -310,7 +310,7 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 
 <h2>The Problem</h2>
 
-<p>We have a deterministic tactical combat simulator. Two teams of heroes fight on a grid. Each hero has up to 8 abilities drawn from an arbitrary pool of abilities &mdash; heals, stuns, dashes, AoE damage, shields, channeled beams, traps, you name it. Every ability is defined in a custom DSL:</p>
+<p>We have a deterministic tactical combat simulator. Two teams of units fight on a grid. Each unit has up to 8 abilities drawn from an arbitrary pool of abilities &mdash; heals, stuns, dashes, AoE damage, shields, channeled beams, traps, you name it. Every ability is defined in a custom DSL:</p>
 
 <pre><code class="dsl"><span class="keyword">ability</span> <span class="name">Fireball</span> {
     <span class="prop">target</span>: <span class="type">enemy</span>, <span class="prop">range</span>: <span class="value">5.0</span>
@@ -328,9 +328,9 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
     <span class="keyword">immune</span> [<span class="type">STUN</span>, <span class="type">SLOW</span>, <span class="type">ROOT</span>] <span class="prop">duration</span> <span class="value">4s</span>
 }</code></pre>
 
-<p>The action space is heterogeneous: movement is a <strong>9-way directional choice</strong>, but combat involves selecting both an <strong>action type</strong> (attack, hold, or use ability 0-7) and a <strong>target entity</strong> via pointer attention. The number of valid abilities changes per hero, per tick.</p>
+<p>The action space is heterogeneous: movement is a <strong>9-way directional choice</strong>, but combat involves selecting both an <strong>action type</strong> (attack, hold, or use ability 0-7) and a <strong>target entity</strong> via pointer attention. The number of valid abilities changes per unit, per tick.</p>
 
-<p>The goal: train a single policy network that commands any hero composition against any enemy composition, from random initialization, using only RL.</p>
+<p>The goal: train a single policy network that commands any unit composition against any enemy composition, from random initialization, using only RL.</p>
 
 <hr>
 
@@ -343,7 +343,7 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
   <figcaption><strong>Figure 1.</strong> Full architecture. The pretrained ability transformer (top, purple) runs once per fight to produce 128d [CLS] embeddings. The learned policy network (bottom, blue) runs every tick &mdash; 113K parameters total.</figcaption>
 </figure>
 
-<p><strong>Why this decomposition?</strong> The ability transformer is expensive (~2.8M params, 4-layer encoder over token sequences). But abilities don&rsquo;t change mid-fight &mdash; a hero&rsquo;s kit is fixed at spawn. So we <strong>pre-compute</strong> the [CLS] embedding for every ability once at fight start, cache them in a registry, and only the lightweight 113K-param policy runs per tick.</p>
+<p><strong>Why this decomposition?</strong> The ability transformer is expensive (~2.8M params, 4-layer encoder over token sequences). But abilities don&rsquo;t change mid-fight &mdash; a unit&rsquo;s kit is fixed at spawn. So we <strong>pre-compute</strong> the [CLS] embedding for every ability once at fight start, cache them in a registry, and only the lightweight 113K-param policy runs per tick.</p>
 
 <h3>Entity Representation</h3>
 
@@ -380,13 +380,13 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 <p><strong>Key insight:</strong> Joint training (MLM + behavioral) destroys MLM performance. The solution is curriculum: MLM first to learn syntax, then freeze the encoder and train only a behavioral prediction head. The [CLS] embeddings from this frozen encoder capture both syntactic structure (what tokens appear) and behavioral semantics (what the ability actually does in the sim).</p>
 </div>
 
-<p>The registry is a JSON file mapping ability names to 128d vectors. At episode generation time, Rust looks up each hero&rsquo;s abilities and passes the embeddings through shared memory alongside the game state.</p>
+<p>The registry is a JSON file mapping ability names to 128d vectors. At episode generation time, Rust looks up each unit&rsquo;s abilities and passes the embeddings through shared memory alongside the game state.</p>
 
 <hr>
 
 <h2>Training Infrastructure: 4,096 Parallel Sims via Shared Memory</h2>
 
-<p>IMPALA needs massive throughput: each iteration generates thousands of episodes, trains one gradient step, then generates again. The bottleneck is inference &mdash; every sim tick, every hero needs a forward pass to choose actions.</p>
+<p>IMPALA needs massive throughput: each iteration generates thousands of episodes, trains one gradient step, then generates again. The bottleneck is inference &mdash; every sim tick, every unit needs a forward pass to choose actions.</p>
 
 <p>We solve this with a <strong>shared-memory GPU inference server</strong>:</p>
 
@@ -437,9 +437,9 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 <table>
   <thead><tr><th>Reward Component</th><th>Signal</th><th>Scale</th></tr></thead>
   <tbody>
-    <tr><td>HP differential</td><td><code>(enemy_dmg - hero_dmg) / avg_unit_hp</code></td><td>1.0</td></tr>
-    <tr><td>Kill bonus</td><td>hero kills an enemy</td><td>+0.5</td></tr>
-    <tr><td>Death penalty</td><td>hero dies</td><td>&minus;0.5</td></tr>
+    <tr><td>HP differential</td><td><code>(enemy_dmg - unit_dmg) / avg_unit_hp</code></td><td>1.0</td></tr>
+    <tr><td>Kill bonus</td><td>unit kills an enemy</td><td>+0.5</td></tr>
+    <tr><td>Death penalty</td><td>unit dies</td><td>&minus;0.5</td></tr>
     <tr><td>Approach reward</td><td>closing distance to nearest enemy</td><td>0.002/unit</td></tr>
     <tr><td>Engagement bonus</td><td>being within attack range</td><td>+0.01/tick</td></tr>
     <tr><td>Hold penalty</td><td>holding position near enemies</td><td>&minus;0.02/tick</td></tr>
@@ -453,7 +453,7 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 
 <figure>
   <div class="fig-container" id="fig-curriculum"></div>
-  <figcaption><strong>Figure 7.</strong> Curriculum progression. Each phase adds more scenarios with increasingly complex hero kits. Checkpoints propagate forward.</figcaption>
+  <figcaption><strong>Figure 7.</strong> Curriculum progression. Each phase adds more scenarios with increasingly complex unit kits. Checkpoints propagate forward.</figcaption>
 </figure>
 
 <p>Each phase runs 20 iterations, starting from the previous phase&rsquo;s best checkpoint.</p>
@@ -982,7 +982,7 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
 
   const phases=[
     {n:'Phase 1',s:108,d:'Autoattack Only',t:'10\u00d7 HP, no abilities',c:C.blue},
-    {n:'Phase 2',s:148,d:'Simple Kits',t:'1-2 abilities/hero',c:C.purple},
+    {n:'Phase 2',s:148,d:'Simple Kits',t:'1-2 abilities/unit',c:C.purple},
     {n:'Phase 3',s:272,d:'Full Kits',t:'Complex compositions',c:C.orange},
     {n:'Phase 4',s:474,d:'Everything',t:'All + stress tests',c:C.red},
   ];

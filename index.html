@@ -609,7 +609,7 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   txt(svg,160,242,'CLS Projection',{fill:C.blue,size:12,weight:600});
   txt(svg,160,258,'128 \u2192 32d linear',{fill:C.muted,size:10,mono:true});
 
-  pathArrow(svg,svg,`M745,100 L745,140 Q745,150 735,150 L160,150 Q150,150 150,160 L150,217`,C.muted,'6,3');
+  pathArrow(svg,svg,`M745,100 L745,140 Q745,150 735,150 L160,150 Q150,150 150,160 L150,220`,C.muted,'6,3');
 
   box(svg,360,220,220,55,C.surface,C.blueDim);
   txt(svg,470,242,'Entity Encoder',{fill:C.blue,size:12,weight:600});
@@ -618,15 +618,15 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   box(svg,640,220,130,55,C.surface2,C.borderBright);
   txt(svg,705,240,'Game State',{fill:C.heading,size:11,weight:600});
   txt(svg,705,258,'7 \u00d7 30 = 210d',{fill:C.muted,size:10,mono:true});
-  arrow(svg,svg,637,247,583,247,C.muted);
+  arrow(svg,svg,640,247,580,247,C.muted);
 
   // Cross-attention
   box(svg,170,320,300,55,C.surface,C.greenDim);
   txt(svg,320,342,'Cross-Attention Block',{fill:C.green,size:13,weight:600});
   txt(svg,320,360,'ability queries \u00d7 entity keys, 4 heads',{fill:C.muted,size:10,mono:true});
 
-  arrow(svg,svg,160,275,260,317,C.blue);
-  arrow(svg,svg,470,275,380,317,C.blue);
+  arrow(svg,svg,160,275,260,320,C.blue);
+  arrow(svg,svg,470,275,380,320,C.blue);
 
   // Output heads
   const hy=420,hh=50;
@@ -643,9 +643,9 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   txt(svg,540,hy+36,'state \u2192 \u211d',{fill:C.muted,size:10,mono:true});
   txt(svg,540,hy+55,'(training only)',{fill:C.muted,size:9});
 
-  arrow(svg,svg,250,375,150,hy-3,C.orange);
-  arrow(svg,svg,320,375,345,hy-3,C.orange);
-  arrow(svg,svg,390,375,540,hy-3,C.muted);
+  arrow(svg,svg,250,375,150,hy,C.orange);
+  arrow(svg,svg,320,375,345,hy,C.orange);
+  arrow(svg,svg,390,375,540,hy,C.muted);
 
   txt(svg,150,hy+hh+18,'\u2191\u2193\u2190\u2192\u2196\u2197\u2199\u2198\u2022',{fill:C.orange,size:14});
   txt(svg,345,hy+hh+18,'target entity pointer',{fill:C.orange,size:10});
@@ -680,7 +680,7 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
       txt(g,x+sW/2,fy+sh/2+3,f,{fill:featC[fi],size:7,mono:true});
       fy+=sh;
     });
-    arrow(g,svg,x+sW/2,sy+sH+3,x+sW/2,sy+sH+30,C.muted);
+    arrow(g,svg,x+sW/2,sy+sH,x+sW/2,sy+sH+33,C.muted);
   });
 
   const saY=sy+sH+33,saW=names.length*(sW+gap)-gap;
@@ -788,10 +788,10 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   box(svg,325,112,185,32,C.surface,C.greenDim);
   txt(svg,417,132,'119-dim outcome vector',{fill:C.green,size:11,weight:500});
 
-  arrow(svg,svg,417,103,417,109,C.green);
+  arrow(svg,svg,417,103,417,112,C.green);
 
-  txt(svg,280,110,'freeze',{fill:C.muted,size:9});
-  arrow(svg,svg,265,110,302,110,C.muted);
+  txt(svg,285,100,'freeze',{fill:C.muted,size:9});
+  pathArrow(svg,svg,`M265,100 L305,100`,C.muted,'4,3');
 
   // Cluster scatter
   const cx2=590,cy2=20,cw=200,ch=180;
@@ -819,9 +819,9 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   txt(svg,410,278,'943 abilities \u00d7 128d behavioral embeddings',{fill:C.heading,size:13,weight:600});
   txt(svg,410,294,'cached in registry JSON, loaded at episode start',{fill:C.muted,size:10});
 
-  pathArrow(svg,svg,`M152,200 L152,240 Q152,255 170,255 L180,278`,C.muted,'5,3');
-  pathArrow(svg,svg,`M417,200 L417,240 Q417,255 430,255 L435,278`,C.muted,'5,3');
-  pathArrow(svg,svg,`M${cx2+cw/2},${cy2+ch+3} L${cx2+cw/2},${240} Q${cx2+cw/2},${255} ${cx2+cw/2-20},${255} L${640},${278}`,C.muted,'5,3');
+  pathArrow(svg,svg,`M152,200 L152,230 Q152,245 170,245 L180,260`,C.muted,'5,3');
+  pathArrow(svg,svg,`M417,200 L417,230 Q417,245 430,245 L410,260`,C.muted,'5,3');
+  pathArrow(svg,svg,`M${cx2+cw/2},${cy2+ch} L${cx2+cw/2},${230} Q${cx2+cw/2},${245} ${cx2+cw/2-20},${245} L${640},${260}`,C.muted,'5,3');
 })();
 
 // ═══ FIGURE 5: SHM Infrastructure ═══

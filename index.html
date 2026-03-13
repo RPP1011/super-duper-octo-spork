@@ -340,10 +340,10 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 
 <figure class="wide">
   <div class="fig-container" id="fig-architecture"></div>
-  <figcaption><strong>Figure 1.</strong> Full architecture. The pretrained ability transformer (top, purple) runs once per fight to produce 128d [CLS] embeddings. The learned policy network (bottom, blue) runs every tick &mdash; 113K parameters total.</figcaption>
+  <figcaption><strong>Figure 1.</strong> Full architecture. The pretrained ability transformer (top, purple) runs once per fight to produce 128d ability embeddings. The learned policy network (bottom, blue) runs every tick &mdash; 113K parameters total.</figcaption>
 </figure>
 
-<p><strong>Why this decomposition?</strong> The ability transformer is expensive (~2.8M params, 4-layer encoder over token sequences). But abilities don&rsquo;t change mid-fight &mdash; a unit&rsquo;s kit is fixed at spawn. So we <strong>pre-compute</strong> the [CLS] embedding for every ability once at fight start, cache them in a registry, and only the lightweight 113K-param policy runs per tick.</p>
+<p><strong>Why this decomposition?</strong> The ability transformer is expensive (~2.8M params, 4-layer encoder over token sequences). But abilities don&rsquo;t change mid-fight &mdash; a unit&rsquo;s kit is fixed at spawn. So we <strong>pre-compute</strong> a summary embedding for every ability once at fight start, cache them in a registry, and only the lightweight 113K-param policy runs per tick.</p>
 
 <h3>Entity Representation</h3>
 
@@ -377,7 +377,7 @@ svg .label-mono { font-family: 'IBM Plex Mono', monospace; }
 </figure>
 
 <div class="callout">
-<p><strong>Key insight:</strong> Joint training (MLM + behavioral) destroys MLM performance. The solution is curriculum: MLM first to learn syntax, then freeze the encoder and train only a behavioral prediction head. The [CLS] embeddings from this frozen encoder capture both syntactic structure (what tokens appear) and behavioral semantics (what the ability actually does in the sim).</p>
+<p><strong>Key insight:</strong> Joint training (MLM + behavioral) destroys MLM performance. The solution is curriculum: MLM first to learn syntax, then freeze the encoder and train only a behavioral prediction head. The summary embeddings from this frozen encoder capture both syntactic structure (what tokens appear) and behavioral semantics (what the ability actually does in the sim).</p>
 </div>
 
 <p>The registry is a JSON file mapping ability names to 128d vectors. At episode generation time, Rust looks up each unit&rsquo;s abilities and passes the embeddings through shared memory alongside the game state.</p>
@@ -596,7 +596,7 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   txt(svg,350,97,'252-token vocab',{fill:C.muted,size:10,mono:true});
 
   box(svg,520,50,130,50,C.surface2,C.purpleDim);
-  txt(svg,585,70,'[CLS] tokens',{fill:C.purple,size:12,weight:600});
+  txt(svg,585,70,'Summary Emb.',{fill:C.purple,size:12,weight:600});
   txt(svg,585,87,'128d each',{fill:C.muted,size:10,mono:true});
 
   box(svg,700,50,90,50,C.surface2,C.borderBright);
@@ -612,7 +612,7 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   txt(svg,W/2,197,'LEARNED DURING RL (113K params)',{fill:C.blue,size:11,weight:600});
 
   box(svg,80,220,160,55,C.surface,C.blueDim);
-  txt(svg,160,242,'CLS Projection',{fill:C.blue,size:12,weight:600});
+  txt(svg,160,242,'Emb. Projection',{fill:C.blue,size:12,weight:600});
   txt(svg,160,258,'128 \u2192 32d linear',{fill:C.muted,size:10,mono:true});
 
   pathArrow(svg,svg,`M745,100 L745,140 Q745,150 735,150 L160,150 Q150,150 150,160 L150,220`,C.muted,'6,3');

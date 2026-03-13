@@ -782,13 +782,34 @@ Fix: `RELOAD_PATH_LEN = 64 → 256` in gpu_inference_server.py and impala_learne
 | 5 | 40.0% | 2.969 | 0.169 | 0.0052 | 0.0175 | **Eval: 41.7%** (45W/46L/17T) |
 | 6 | 44.3% | 2.852 | 0.183 | 0.0056 | 0.0193 | |
 | 7 | 45.2% | 2.729 | 0.181 | 0.0057 | 0.0204 | |
-| 8 | 41.5% | — | — | — | — | Training in progress |
+| 8 | 41.5% | 2.645 | 0.174 | 0.0058 | 0.0209 | |
+| 9 | 42.6% | 2.545 | 0.170 | 0.0059 | 0.0213 | |
+| 10 | 40.2% | 2.471 | 0.153 | 0.0060 | 0.0216 | **Eval: 44.4%** (48W/38L/22T) |
+| 11 | 39.3% | 2.408 | 0.137 | 0.0060 | 0.0216 | |
+| 12 | 36.3% | 2.372 | 0.130 | 0.0062 | 0.0216 | |
+| 13 | 37.0% | 2.329 | 0.129 | 0.0061 | 0.0217 | |
+| 14 | 35.9% | 2.351 | 0.101 | 0.0062 | 0.0217 | KL dropping! |
+| 15 | 35.7% | 2.362 | 0.098 | 0.0061 | 0.0217 | **Eval: 49.1%** (53W/35L/20T) |
+| 16 | 34.1% | 2.387 | 0.085 | 0.0059 | 0.0216 | |
+| 17 | 35.9% | 2.465 | 0.074 | 0.0062 | 0.0218 | Entropy recovering |
+| 18 | 35.9% | 2.504 | 0.083 | 0.0059 | 0.0218 | |
+| 19 | 36.3% | 2.536 | 0.071 | 0.0059 | 0.0218 | |
+| 20 | 36.9% | 2.579 | 0.068 | 0.0062 | 0.0218 | **Eval: 48.1%** (52W/38L/18T) |
 
-Phase 1 early notes:
-- **GPU reload works.** Every iteration shows "Reloaded weights from ..." — first successful reload ever.
-- **KL = 0.17 at iter 5** (was 1.18 in EC2). Proper on-policy: behavior policy matches current policy.
-- **Value loss sustained at 0.005-0.007** (was collapsing to 0.0004 by iter 4 in EC2). Value head is actually training.
-- **Training win rate CLIMBING: 29→35→39→38→40%** (was flat at ~30% in EC2). The model is improving its exploration policy, not just its argmax.
-- **Reward climbing: 0.006→0.018** — policy getting better returns each iteration.
-- **Entropy barely moving: 3.23→2.97** — no collapse (EC2 was at 2.79 by iter 5).
-- **Eval 41.7% at iter 5** — already matches EC2's iter 5 (38.9%) and approaching EC2's peak (51.9% at iter 20). And we're only 5 iters in with stable KL.
+Phase 1 notes:
+- **GPU reload confirmed working every iteration.** First successful reload in project history.
+- **KL DECREASED over training: 0.095→0.068.** The opposite of every previous run. As the policy converges, per-iteration changes shrink. This is textbook healthy RL.
+- **Value loss SUSTAINED at 0.006 for all 20 iters.** Never collapsed. The value head learned meaningful state values because V-trace advantages were computed correctly.
+- **Eval: 41.7% → 44.4% → 49.1% → 48.1%.** Peaked at 49.1% (iter 15). Slight dip at iter 20 but within noise.
+- **Training win rate: rose to 45% (iter 7), then settled to ~36%.** The policy became more peaked (entropy 3.2→2.3) — fewer random exploratory wins, but the greedy policy improved.
+- **Entropy: 3.23→2.33 (iters 1-13), then RECOVERED to 2.58 (iters 14-20).** Same recovery pattern as EC2 P2/P3, but here it's healthy — KL stayed at 0.07 and eval held at ~49%.
+- **Reward plateaued at 0.022** — the policy extracted maximum dense reward from tier1 scenarios.
+- **pg_loss near zero** throughout (±0.01). V-trace corrections are minimal because behavior ≈ current policy. Compare EC2 where pg_loss reached -1.9.
+
+#### Phase 2 (tier1+2, 148 scenarios, 20 iters) — RUNNING (iter 1)
+
+| Iter | Win% | Entropy | KL | Value Loss | Reward | Notes |
+|------|------|---------|-----|------------|--------|-------|
+| 1 | 39.7% | — | — | — | — | Generating |
+
+Phase 2 notes: Starts at 39.7% training win rate on 148 scenarios — much stronger than EC2's 34.2% start. The P1 checkpoint at 49% eval should transfer well.

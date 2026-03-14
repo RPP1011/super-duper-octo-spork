@@ -734,8 +734,10 @@ function pathArrow(g,svg,d,color=C.muted,dash){const id=addArrow(svg,color);cons
   const dotY=kvY+32+35;
   txt(svg,W/2,dotY-18,'Q \u00b7 K\u1d40 / \u221a32',{fill:C.heading,size:14,weight:600});
 
-  // Connect Q and K/V to dot product
-  pathArrow(svg,svg,`M${abX+80},${qBoxY+32} L${abX+80},${dotY+8} L${entX-10},${dotY+8}`,C.blue,'5,3');
+  // Connect Q to dot product — arrow leaves right side of Q box
+  const qBoxRight = abX+30+100; // right edge of Q box
+  const dotCenterX = entX+(entNames.length*(eW+eGap)-eGap)/2;
+  pathArrow(svg,svg,`M${qBoxRight},${qBoxY+16} L${entX-10},${qBoxY+16} L${entX-10},${dotY+8} L${entX+5},${dotY+8}`,C.blue,'5,3');
   arrow(svg,svg,entX+(entNames.length*(eW+eGap)-eGap)/2,kvY+32,entX+(entNames.length*(eW+eGap)-eGap)/2,dotY-2,C.muted);
 
   // Attention weight cells

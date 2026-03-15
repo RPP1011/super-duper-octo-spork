@@ -195,7 +195,9 @@ pub fn write_ability_eval_dataset(
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     for sample in samples {
-        serde_json::to_writer(&mut writer, sample).unwrap();
+        serde_json::to_writer(&mut writer, sample)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize ability eval sample at tick {}: {e}", sample.tick)))?;
         writeln!(writer)?;
     }
     Ok(())

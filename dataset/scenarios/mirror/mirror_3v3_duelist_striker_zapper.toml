@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_duelist_striker_zapper"
+seed = 28623
+hero_count = 3
+enemy_count = 0
+hero_templates = ["duelist", "striker", "zapper"]
+enemy_hero_templates = ["duelist", "striker", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

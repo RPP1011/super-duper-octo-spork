@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_3_3_prio_hp_71169"
+seed = 71169
+hero_count = 1
+enemy_count = 0
+max_ticks = 300
+room_type = "Entry"
+hero_templates = [
+    "archer",
+]
+enemy_hero_templates = []
+drill_type = "prioritize_target"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 1000
+dps_override = 0.0
+tag = "full_hp"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 100
+dps_override = 0.0
+tag = "low_hp"
+
+[scenario.objective]
+objective_type = "kill_target"
+target_tag = "low_hp"

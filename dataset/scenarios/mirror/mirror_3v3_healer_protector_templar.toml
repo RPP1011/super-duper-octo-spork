@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_healer_protector_templar"
+seed = 73115
+hero_count = 3
+enemy_count = 0
+hero_templates = ["healer", "protector", "templar"]
+enemy_hero_templates = ["healer", "protector", "templar"]
+max_ticks = 800
+room_type = "Pressure"

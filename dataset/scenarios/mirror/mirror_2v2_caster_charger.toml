@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_charger"
+seed = 12757
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "charger"]
+enemy_hero_templates = ["caster", "charger"]
+max_ticks = 800
+room_type = "Pressure"

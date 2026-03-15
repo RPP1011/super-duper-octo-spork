@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_stunner"
+seed = 34931
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "stunner"]
+enemy_hero_templates = ["charger", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

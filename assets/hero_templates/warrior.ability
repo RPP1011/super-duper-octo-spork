@@ -2,7 +2,7 @@
 
 ability Whirlwind {
     target: self_aoe
-    cooldown: 8s, cast: 300ms
+    cooldown: 8s, cast: 400ms
     hint: damage
 
     damage 40 in circle(2.5) [PHYSICAL: 50]
@@ -54,7 +54,7 @@ ability BattleCry {
 
 ability Slam {
     target: enemy, range: 1.5
-    cooldown: 5s, cast: 200ms
+    cooldown: 5s, cast: 500ms
     hint: damage
 
     damage 45 [PHYSICAL: 55]
@@ -63,7 +63,7 @@ ability Slam {
 
 ability Overpower {
     target: enemy, range: 1.5
-    cooldown: 7s, cast: 200ms
+    cooldown: 7s, cast: 600ms
     hint: damage
 
     damage 60 [PHYSICAL: 50]

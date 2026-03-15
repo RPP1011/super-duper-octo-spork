@@ -1,0 +1,19 @@
+[scenario]
+name = "drill_3_1_kill_24933"
+seed = 24933
+hero_count = 1
+enemy_count = 0
+max_ticks = 200
+room_type = "Entry"
+hero_templates = [
+    "archer",
+]
+enemy_hero_templates = []
+drill_type = "kill_target"
+action_mask = "move_attack"
+enemy_units = [
+    { behavior = "stationary_dummy", template = "brute", hp_override = 500, dps_override = 0.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

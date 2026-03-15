@@ -8,6 +8,7 @@
 mod metadata;
 mod coverage;
 mod strategies;
+mod strategies_advanced;
 
 pub use metadata::{Role, HeroMeta, ALL_HEROES, ALL_LOL_HEROES, ROOM_TYPES, heroes_by_role};
 pub use strategies::{generate, write_scenarios};

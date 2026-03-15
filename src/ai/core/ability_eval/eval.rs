@@ -205,10 +205,45 @@ pub fn evaluate_abilities(
     }
 
     if best_urgency >= URGENCY_THRESHOLD {
-        best_action.and_then(|a| fix_out_of_range(a, best_urgency, unit, state))
+        best_action
+            .and_then(|a| check_ability_los(a, unit, state))
+            .and_then(|a| fix_out_of_range(a, best_urgency, unit, state))
     } else {
         None
     }
+}
+
+/// Check line-of-sight for unit-targeted abilities.
+///
+/// If the ability targets a specific unit and terrain blocks the path,
+/// skip the ability (return None) so the AI falls through to other behavior.
+/// Abilities with pierce or Projectile delivery are exempt since they can
+/// travel through or around obstacles.
+fn check_ability_los(action: IntentAction, unit: &UnitState, state: &SimState) -> Option<IntentAction> {
+    use crate::ai::effects::types::Delivery;
+
+    if let IntentAction::UseAbility { ability_index, target: AbilityTarget::Unit(tid) } = action {
+        // Only check when grid_nav is available
+        if let Some(ref nav) = state.grid_nav {
+            // Skip LOS check for pierce/projectile abilities
+            let is_los_exempt = unit.abilities.get(ability_index).map_or(false, |slot| {
+                match &slot.def.delivery {
+                    Some(Delivery::Projectile { pierce, .. }) => *pierce,
+                    _ => false,
+                }
+            });
+
+            if !is_los_exempt {
+                if let Some(target) = state.units.iter().find(|u| u.id == tid) {
+                    if !nav.is_convex_open(unit.position, target.position) {
+                        // LOS blocked — fall through to default AI behavior
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(action)
 }
 
 /// If the chosen ability targets a unit that is out of range, either:

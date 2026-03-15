@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_1_6_dynamic_terrain_16942"
+seed = 16942
+hero_count = 1
+enemy_count = 0
+max_ticks = 500
+room_type = "Pressure"
+hero_templates = [
+    "scout",
+]
+hero_positions = [
+    [
+        10.0,
+        10.0,
+    ],
+]
+enemy_hero_templates = []
+drill_type = "navigate"
+target_position = [
+    17.2,
+    4.3,
+]
+action_mask = "move_only"
+
+[scenario.objective]
+objective_type = "reach_position"
+position = [
+    17.2,
+    4.3,
+]
+radius = 1.0

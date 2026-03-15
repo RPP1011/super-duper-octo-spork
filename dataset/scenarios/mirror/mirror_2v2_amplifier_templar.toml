@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_amplifier_templar"
+seed = 30926
+hero_count = 2
+enemy_count = 0
+hero_templates = ["amplifier", "templar"]
+enemy_hero_templates = ["amplifier", "templar"]
+max_ticks = 800
+room_type = "Pressure"

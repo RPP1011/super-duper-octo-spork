@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_drainer_healer"
+seed = 65444
+hero_count = 2
+enemy_count = 0
+hero_templates = ["drainer", "healer"]
+enemy_hero_templates = ["drainer", "healer"]
+max_ticks = 800
+room_type = "Pressure"

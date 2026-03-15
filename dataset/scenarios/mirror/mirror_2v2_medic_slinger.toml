@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_medic_slinger"
+seed = 15229
+hero_count = 2
+enemy_count = 0
+hero_templates = ["medic", "slinger"]
+enemy_hero_templates = ["medic", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

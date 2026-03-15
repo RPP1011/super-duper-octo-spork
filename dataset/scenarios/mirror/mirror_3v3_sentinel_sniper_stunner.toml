@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_sentinel_sniper_stunner"
+seed = 51697
+hero_count = 3
+enemy_count = 0
+hero_templates = ["sentinel", "sniper", "stunner"]
+enemy_hero_templates = ["sentinel", "sniper", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

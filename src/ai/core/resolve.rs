@@ -54,6 +54,9 @@ pub fn try_start_cast(
         target_pos: None,
         remaining_ms: state.units[attacker_idx].attack_cast_time_ms,
         kind,
+        area: None,
+        ability_index: None,
+        effect_hint: CastEffectHint::Damage,
     };
     state.units[attacker_idx].casting = Some(cast);
     events.push(SimEvent::CastStarted {

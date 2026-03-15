@@ -2,7 +2,7 @@
 
 ability SoulDrain {
     target: enemy, range: 4.0
-    cooldown: 4s, cast: 300ms
+    cooldown: 4s, cast: 400ms
     hint: damage
 
     damage 40 [DARK: 55]
@@ -19,7 +19,7 @@ ability RaiseSkeleton {
 
 ability DeathCoil {
     target: enemy, range: 5.0
-    cooldown: 5s, cast: 300ms
+    cooldown: 5s, cast: 500ms
     hint: damage
 
     deliver projectile { speed: 7.0, width: 0.3 } {
@@ -59,7 +59,7 @@ ability DarkEmpowerment {
 
 ability CorpseExplosion {
     target: self_aoe
-    cooldown: 8s, cast: 300ms
+    cooldown: 8s, cast: 500ms
     hint: damage
 
     damage 55 in circle(3.0) [DARK: 55]

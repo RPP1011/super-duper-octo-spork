@@ -208,6 +208,8 @@ def main():
             uids = s["entity_unit_ids"]
             ne = min(len(ents), MAX_ENTS)
             for j in range(ne):
+                assert len(ents[j]) == ENTITY_DIM, \
+                    f"Entity dim mismatch at sample {i}, entity {j}: {len(ents[j])} != {ENTITY_DIM}"
                 ent_feat[i, j] = ents[j]
                 ent_types[i, j] = types[j]
                 ent_mask[i, j] = False
@@ -239,6 +241,15 @@ def main():
                 abl_ent_idx[i, j] = lut_idx
 
     has_abilities = (abl_ent_idx >= 0).any(axis=1).sum()
+
+    # Validate converted data before saving
+    assert ent_feat.shape == (n, MAX_ENTS, ENTITY_DIM), \
+        f"Entity feature shape mismatch: {ent_feat.shape} != ({n}, {MAX_ENTS}, {ENTITY_DIM})"
+    assert not np.isnan(ent_feat).any(), "NaN detected in entity features"
+    assert not np.isnan(thr_feat).any(), "NaN detected in threat features"
+    assert not np.isnan(pos_feat).any(), "NaN detected in position features"
+    assert not np.isnan(abl_lut).any(), "NaN detected in ability LUT embeddings"
+    print("  Validation passed: no NaN values, dimensions correct")
 
     print(f"Saving to {output_path}...")
     np.savez_compressed(

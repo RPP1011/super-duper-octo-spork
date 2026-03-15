@@ -43,16 +43,19 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from model import AbilityActorCriticV4, MAX_ABILITIES, NUM_COMBAT_TYPES, POSITION_DIM
+from model import (
+    AbilityActorCriticV4, AbilityActorCriticV5,
+    MAX_ABILITIES, NUM_COMBAT_TYPES, POSITION_DIM, AGG_FEATURE_DIM,
+)
 from tokenizer import AbilityTokenizer
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 MAX_ENTITIES = 20
-MAX_THREATS = 4
-MAX_POSITIONS = 4
-ENTITY_DIM = 30
-THREAT_DIM = 8
+MAX_THREATS = 6
+MAX_POSITIONS = 8
+ENTITY_DIM = 34
+THREAT_DIM = 10
 
 SHM_MAGIC = 0x47505549
 SHM_VERSION = 1
@@ -70,32 +73,49 @@ RELOAD_PATH_LEN = 256
 OFF_RELOAD_REQ = 0x180
 OFF_RELOAD_ACK = 0x184
 
-RESPONSE_SAMPLE_SIZE = 16
+OFF_H_DIM = 0x18  # GRU hidden dimension stored in header
+OFF_AGG_DIM = 0x1C  # aggregate token feature dimension
+
+RESPONSE_BASE_SIZE = 16  # move_dir(1) + combat_type(1) + target(2) + 3×f32 log-probs
 
 
-def compute_sample_size(cls_dim: int) -> int:
+def compute_sample_size(cls_dim: int, h_dim: int = 0, agg_dim: int = 0) -> int:
     ent_mask_padded = (MAX_ENTITIES + 3) & ~3
     thr_mask_padded = (MAX_THREATS + 3) & ~3
     pos_mask_padded = (MAX_POSITIONS + 3) & ~3
     return (8 + MAX_ENTITIES * ENTITY_DIM * 4 + MAX_ENTITIES * 4 + ent_mask_padded +
             MAX_THREATS * THREAT_DIM * 4 + thr_mask_padded +
             MAX_POSITIONS * POSITION_DIM * 4 + pos_mask_padded +
-            12 + MAX_ABILITIES + MAX_ABILITIES * cls_dim * 4)
+            12 + MAX_ABILITIES + MAX_ABILITIES * cls_dim * 4 +
+            h_dim * 4 +      # hidden_state_in
+            agg_dim * 4)      # aggregate_features
+
+
+def compute_response_size(h_dim: int = 0) -> int:
+    return RESPONSE_BASE_SIZE + h_dim * 4  # hidden_state_out
 
 
 class InferenceServer:
     def __init__(
         self,
-        model: AbilityActorCriticV4,
+        model: AbilityActorCriticV4 | AbilityActorCriticV5,
         cls_dim: int,
         max_batch_size: int,
         temperature: float = 1.0,
+        h_dim: int = 0,
+        agg_dim: int = 0,
+        n_latents: int = 0,
     ):
         self.model = model
         self.cls_dim = cls_dim
         self.max_batch_size = max_batch_size
         self.temperature = temperature
-        self.sample_size = compute_sample_size(cls_dim)
+        self.h_dim = h_dim
+        self.agg_dim = agg_dim
+        self.n_latents = n_latents  # 0 = use model default (no override)
+        self.is_v5 = isinstance(model, AbilityActorCriticV5)
+        self.sample_size = compute_sample_size(cls_dim, h_dim, agg_dim)
+        self.response_sample_size = compute_response_size(h_dim)
         self.model.eval()
         self._field_offsets = self._compute_field_offsets()
 
@@ -138,11 +158,19 @@ class InferenceServer:
         # 10: ability_cls (MAX_ABILITIES * cls_dim * 4)
         sz = MAX_ABILITIES * self.cls_dim * 4
         fields.append((off, sz)); off += sz
+        # 11: hidden_state_in (h_dim * 4) — GRU hidden state from previous tick
+        if self.h_dim > 0:
+            sz = self.h_dim * 4
+            fields.append((off, sz)); off += sz
+        # 12: aggregate_features (agg_dim * 4) — crowd summary token
+        if self.agg_dim > 0:
+            sz = self.agg_dim * 4
+            fields.append((off, sz)); off += sz
         return fields
 
     def create_shm(self, shm_path: str) -> mmap.mmap:
         req_region = self.max_batch_size * self.sample_size
-        resp_region = self.max_batch_size * RESPONSE_SAMPLE_SIZE
+        resp_region = self.max_batch_size * self.response_sample_size
         total_size = HEADER_SIZE + req_region + resp_region
 
         if os.path.exists(shm_path):
@@ -157,7 +185,10 @@ class InferenceServer:
         struct.pack_into('<IIIIII', mm, 0,
                          SHM_MAGIC, SHM_VERSION, self.cls_dim,
                          self.max_batch_size, self.sample_size,
-                         RESPONSE_SAMPLE_SIZE)
+                         self.response_sample_size)
+        # Write h_dim and agg_dim at dedicated offsets
+        struct.pack_into('<I', mm, OFF_H_DIM, self.h_dim)
+        struct.pack_into('<I', mm, OFF_AGG_DIM, self.agg_dim)
         # Clear flag and batch_size
         struct.pack_into('<II', mm, OFF_FLAG, 0, 0)
         # Clear reload fields
@@ -219,7 +250,7 @@ class InferenceServer:
         foff, fsz = fo[10]
         ability_cls = np.ascontiguousarray(raw[:, foff:foff + fsz]).view(np.float32).reshape(B, MAX_ABILITIES, self.cls_dim)
 
-        return {
+        result = {
             "ent_feat": torch.from_numpy(ent_feat).to(DEVICE),
             "ent_types": torch.from_numpy(ent_types).long().to(DEVICE),
             "ent_mask": torch.from_numpy(ent_mask).bool().to(DEVICE),
@@ -231,6 +262,26 @@ class InferenceServer:
             "ability_has": ability_has,
             "ability_cls": torch.from_numpy(ability_cls).to(DEVICE),
         }
+
+        # Hidden state input for GRU temporal context
+        if self.h_dim > 0 and len(fo) > 11:
+            foff, fsz = fo[11]
+            h_in = np.ascontiguousarray(raw[:, foff:foff + fsz]).view(np.float32).reshape(B, self.h_dim)
+            result["h_prev"] = torch.from_numpy(h_in).to(DEVICE)
+
+        # Aggregate features for V5
+        agg_field_idx = 12 if self.h_dim > 0 else 11
+        if self.agg_dim > 0 and len(fo) > agg_field_idx:
+            foff, fsz = fo[agg_field_idx]
+            agg = np.ascontiguousarray(raw[:, foff:foff + fsz]).view(np.float32).reshape(B, self.agg_dim)
+            result["aggregate_features"] = torch.from_numpy(agg).to(DEVICE)
+            # Debug: print first batch's aggregate values once
+            if not hasattr(self, '_agg_debug_done'):
+                self._agg_debug_done = True
+                print(f"  [gpu] AGG DEBUG: first sample agg[14:16] = "
+                      f"{agg[0, 14]:.4f}, {agg[0, 15]:.4f}", flush=True)
+
+        return result
 
     @torch.no_grad()
     def infer(self, batch: dict, batch_size: int) -> bytes:
@@ -244,12 +295,29 @@ class InferenceServer:
                 if mask.any():
                     ability_cls[ab] = cls_tensor
 
-        output, value = self.model(
-            batch["ent_feat"], batch["ent_types"],
-            batch["thr_feat"], batch["ent_mask"], batch["thr_mask"],
-            ability_cls,
-            batch["pos_feat"], batch["pos_mask"],
-        )
+        h_prev = batch.get("h_prev", None)
+        agg_feat = batch.get("aggregate_features", None)
+
+        if self.is_v5:
+            output, h_new = self.model(
+                batch["ent_feat"], batch["ent_types"],
+                batch["thr_feat"], batch["ent_mask"], batch["thr_mask"],
+                ability_cls,
+                batch["pos_feat"], batch["pos_mask"],
+                aggregate_features=agg_feat,
+                h_prev=h_prev,
+                n_latents_override=self.n_latents if self.n_latents > 0 else None,
+            )
+            value = None
+        else:
+            output, value, h_new = self.model(
+                batch["ent_feat"], batch["ent_types"],
+                batch["thr_feat"], batch["ent_mask"], batch["thr_mask"],
+                ability_cls,
+                batch["pos_feat"], batch["pos_mask"],
+                h_prev=h_prev,
+                aggregate_features=agg_feat,
+            )
 
         move_logits = output["move_logits"] / self.temperature
         combat_logits = output["combat_logits"].masked_fill(~batch["combat_mask"], -1e9) / self.temperature
@@ -294,7 +362,8 @@ class InferenceServer:
             lp_pointer[ab_mask] = lp_raw.gather(1, ti.unsqueeze(1)).squeeze(1).clamp(min=-10)
 
         # Vectorized response packing via numpy
-        resp_np = np.zeros((batch_size, RESPONSE_SAMPLE_SIZE), dtype=np.uint8)
+        rss = self.response_sample_size
+        resp_np = np.zeros((batch_size, rss), dtype=np.uint8)
         md_cpu = move_dirs.cpu().numpy().astype(np.uint8)
         ct_cpu = combat_types.cpu().numpy().astype(np.uint8)
         ti_cpu = target_indices.cpu().numpy().astype(np.uint16)
@@ -308,6 +377,11 @@ class InferenceServer:
         resp_np[:, 4:8] = lpm_cpu.view(np.uint8).reshape(-1, 4)
         resp_np[:, 8:12] = lpc_cpu.view(np.uint8).reshape(-1, 4)
         resp_np[:, 12:16] = lpp_cpu.view(np.uint8).reshape(-1, 4)
+        # Pack GRU hidden state output
+        if self.h_dim > 0:
+            h_cpu = h_new.cpu().numpy().astype(np.float32)
+            h_bytes = h_cpu.view(np.uint8).reshape(batch_size, self.h_dim * 4)
+            resp_np[:, 16:16 + self.h_dim * 4] = h_bytes
         resp = bytes(resp_np.tobytes())
 
         self.total_inferences += batch_size
@@ -396,36 +470,66 @@ def main():
     p.add_argument("--entity-encoder-layers", type=int, default=4)
     p.add_argument("--external-cls-dim", type=int, default=0)
     p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--h-dim", type=int, default=0,
+                   help="GRU hidden dimension for temporal context (0 = disabled)")
+    p.add_argument("--model-version", type=int, default=4, choices=[4, 5],
+                   help="Model version: 4 (V4, d=32 default) or 5 (V5, d=128 default)")
+    p.add_argument("--n-latents", type=int, default=0,
+                   help="V5 latent count override for inference (0 = use model default)")
     args = p.parse_args()
 
     tok = AbilityTokenizer()
-    model = AbilityActorCriticV4(
-        vocab_size=tok.vocab_size,
-        entity_encoder_layers=args.entity_encoder_layers,
-        external_cls_dim=args.external_cls_dim,
-        d_model=args.d_model, d_ff=args.d_ff,
-        n_layers=args.n_layers, n_heads=args.n_heads,
-    ).to(DEVICE)
+    h_dim = args.h_dim
+    # Enable aggregate features for V5, or for V4 with target_proj
+    agg_dim = AGG_FEATURE_DIM if args.model_version == 5 else 0
+    if agg_dim == 0:
+        # Check if V4 checkpoint has target_proj — if so, enable aggregate
+        try:
+            ckpt_check = torch.load(args.weights, map_location="cpu", weights_only=False)
+            sd_check = ckpt_check.get("model_state_dict", ckpt_check)
+            if any("target_proj" in k or "target_move_head" in k for k in sd_check):
+                agg_dim = AGG_FEATURE_DIM
+                print(f"V4 with target_proj detected — enabling aggregate features (agg_dim={agg_dim})")
+        except Exception:
+            pass
+
+    if args.model_version == 5:
+        model = AbilityActorCriticV5(
+            vocab_size=tok.vocab_size,
+            entity_encoder_layers=args.entity_encoder_layers,
+            external_cls_dim=args.external_cls_dim,
+            h_dim=h_dim if h_dim > 0 else 256,
+            d_model=args.d_model, d_ff=args.d_ff if args.d_ff > 0 else args.d_model * 2,
+            n_layers=args.n_layers, n_heads=args.n_heads,
+        ).to(DEVICE)
+    else:
+        model = AbilityActorCriticV4(
+            vocab_size=tok.vocab_size,
+            entity_encoder_layers=args.entity_encoder_layers,
+            external_cls_dim=args.external_cls_dim,
+            h_dim=h_dim if h_dim > 0 else 64,
+            d_model=args.d_model, d_ff=args.d_ff,
+            n_layers=args.n_layers, n_heads=args.n_heads,
+        ).to(DEVICE)
 
     ckpt = torch.load(args.weights, map_location=DEVICE, weights_only=False)
     sd = ckpt.get("model_state_dict", ckpt)
-    model.load_state_dict(sd)
+    model.load_state_dict(sd, strict=False)
     model.eval()
 
+    version_str = "V5" if args.model_version == 5 else "V4"
     total_params = sum(pp.numel() for pp in model.parameters())
-    print(f"Model: {total_params:,} params on {DEVICE}")
-
-    # Note: torch.compile and bf16 both fail/hurt with nn.MultiheadAttention
-    # for this small model. CUDA kernel launch latency dominates, not compute.
+    print(f"Model {version_str}: {total_params:,} params on {DEVICE} (h_dim={h_dim}, agg_dim={agg_dim})")
 
     cls_dim = args.external_cls_dim if args.external_cls_dim > 0 else args.d_model
     server = InferenceServer(model, cls_dim, args.max_batch_size,
-                             temperature=args.temperature)
+                             temperature=args.temperature, h_dim=h_dim,
+                             agg_dim=agg_dim, n_latents=args.n_latents)
 
     shm_path = f"/dev/shm/{args.shm_name}"
     mm = server.create_shm(shm_path)
     req_region = args.max_batch_size * server.sample_size
-    resp_region = args.max_batch_size * RESPONSE_SAMPLE_SIZE
+    resp_region = args.max_batch_size * server.response_sample_size
     total = HEADER_SIZE + req_region + resp_region
     print(f"Shared memory: {shm_path} "
           f"(max_batch={args.max_batch_size}, sample={server.sample_size}B, "

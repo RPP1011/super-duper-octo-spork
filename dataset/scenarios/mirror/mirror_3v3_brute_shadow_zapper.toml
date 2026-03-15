@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_shadow_zapper"
+seed = 27796
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "shadow", "zapper"]
+enemy_hero_templates = ["brute", "shadow", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

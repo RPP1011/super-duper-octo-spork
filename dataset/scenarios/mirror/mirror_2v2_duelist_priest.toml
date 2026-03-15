@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_duelist_priest"
+seed = 98501
+hero_count = 2
+enemy_count = 0
+hero_templates = ["duelist", "priest"]
+enemy_hero_templates = ["duelist", "priest"]
+max_ticks = 800
+room_type = "Pressure"

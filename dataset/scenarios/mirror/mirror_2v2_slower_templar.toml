@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slower_templar"
+seed = 90120
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slower", "templar"]
+enemy_hero_templates = ["slower", "templar"]
+max_ticks = 800
+room_type = "Pressure"

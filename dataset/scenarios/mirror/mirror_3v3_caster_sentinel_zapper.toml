@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_caster_sentinel_zapper"
+seed = 16917
+hero_count = 3
+enemy_count = 0
+hero_templates = ["caster", "sentinel", "zapper"]
+enemy_hero_templates = ["caster", "sentinel", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

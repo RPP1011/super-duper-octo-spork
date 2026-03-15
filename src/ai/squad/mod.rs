@@ -17,3 +17,18 @@ pub use intents::{generate_intents, generate_intents_with_terrain};
 pub use replay::{
     run_phase3_sample, sample_phase3_party_state,
 };
+
+/// Public wrapper: evaluate hero abilities against a target.
+///
+/// Used by the student pipeline to integrate ability usage into the hero
+/// tactical override without going through the full squad AI intent generation.
+pub fn combat_evaluate_hero_ability(
+    state: &crate::ai::core::SimState,
+    unit_id: u32,
+    target_id: u32,
+) -> Option<crate::ai::core::IntentAction> {
+    combat::abilities::evaluate_hero_ability(
+        state, unit_id, target_id, FormationMode::Advance,
+        &state::TickContext::new(state),
+    )
+}

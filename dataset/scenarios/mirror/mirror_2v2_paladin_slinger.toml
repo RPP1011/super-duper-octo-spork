@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_paladin_slinger"
+seed = 33509
+hero_count = 2
+enemy_count = 0
+hero_templates = ["paladin", "slinger"]
+enemy_hero_templates = ["paladin", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_amplifier_duelist"
+seed = 21395
+hero_count = 2
+enemy_count = 0
+hero_templates = ["amplifier", "duelist"]
+enemy_hero_templates = ["amplifier", "duelist"]
+max_ticks = 800
+room_type = "Pressure"

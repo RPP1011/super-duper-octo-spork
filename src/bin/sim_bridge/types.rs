@@ -18,6 +18,9 @@ pub struct InitMessage {
     pub ticks: u32,
     #[serde(default = "default_decision_interval")]
     pub decision_interval: u32,
+    /// Enable GOAP AI for hero units (auto-assigns behaviors by role).
+    #[serde(default)]
+    pub goap: bool,
 }
 
 fn default_seed() -> Option<u64> {

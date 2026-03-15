@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_charger_priest_slower"
+seed = 49917
+hero_count = 3
+enemy_count = 0
+hero_templates = ["charger", "priest", "slower"]
+enemy_hero_templates = ["charger", "priest", "slower"]
+max_ticks = 800
+room_type = "Pressure"

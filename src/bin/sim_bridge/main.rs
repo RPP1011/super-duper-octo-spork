@@ -81,7 +81,33 @@ fn main() {
         personalities.insert(u.id, PersonalityProfile::vanguard());
     }
 
-    let mut control_ai = ControlAiState::new(&state, roles.clone());
+    // Find game root by walking up from scenario path until we find assets/behaviors/
+    let game_root = {
+        let mut p = scenario_path.canonicalize().unwrap_or_else(|_| scenario_path.to_path_buf());
+        loop {
+            if p.join("assets").join("behaviors").is_dir() {
+                break;
+            }
+            if !p.pop() {
+                p = std::path::PathBuf::from(".");
+                break;
+            }
+        }
+        p
+    };
+
+    let mut control_ai = if init.goap {
+        eprintln!("[sim_bridge] GOAP mode enabled");
+        match build_goap_for_heroes(&state, &roles, &game_root, &cfg.hero_templates) {
+            Some(goap) => ControlAiState::new_with_goap(&state, roles.clone(), goap),
+            None => {
+                eprintln!("[sim_bridge] No GOAP defs loaded, falling back to squad AI");
+                ControlAiState::new(&state, roles.clone())
+            }
+        }
+    } else {
+        ControlAiState::new(&state, roles.clone())
+    };
     let mut personality_ai = PersonalityAiState::new(&state, roles.clone(), personalities.clone());
 
     let mut all_events: Vec<SimEvent> = Vec::new();

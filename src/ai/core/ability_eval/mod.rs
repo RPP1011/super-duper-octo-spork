@@ -8,6 +8,11 @@ mod categories;
 mod features;
 mod features_aoe;
 mod game_state;
+mod game_state_v2;
+mod game_state_threats;
+mod game_state_positions;
+mod game_state_nextstate;
+mod game_state_operator;
 mod oracle_scoring;
 mod weights;
 mod eval;
@@ -21,6 +26,14 @@ pub use features::*;
 pub use features_aoe::*;
 #[allow(unused_imports)]
 pub use game_state::*;
+#[allow(unused_imports)]
+pub use game_state_v2::*;
+#[allow(unused_imports)]
+pub use game_state_threats::*;
+#[allow(unused_imports)]
+pub use game_state_nextstate::*;
+#[allow(unused_imports)]
+pub use game_state_operator::*;
 #[allow(unused_imports)]
 pub use oracle_scoring::*;
 #[allow(unused_imports)]

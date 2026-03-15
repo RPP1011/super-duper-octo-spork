@@ -135,20 +135,40 @@ fn build_hero_vs_hero(
     enemy_tomls: &[HeroToml],
     seed: u64,
 ) -> SimState {
+    build_hero_vs_hero_with_spawns(hero_tomls, enemy_tomls, seed, None, None)
+}
+
+fn build_hero_vs_hero_with_spawns(
+    hero_tomls: &[HeroToml],
+    enemy_tomls: &[HeroToml],
+    seed: u64,
+    hero_spawns: Option<&[SimVec2]>,
+    enemy_spawns: Option<&[SimVec2]>,
+) -> SimState {
     let mut units: Vec<crate::ai::core::UnitState> = Vec::new();
     let mut next_id: u32 = 1;
 
-    // Team A (Hero) — positioned along x=2..8, y=5
+    // Team A (Hero)
     for (i, toml) in hero_tomls.iter().enumerate() {
-        let x = 2.0 + (i as f32) * (6.0 / hero_tomls.len().max(1) as f32);
-        units.push(hero_toml_to_unit(toml, next_id, Team::Hero, sim_vec2(x, 5.0)));
+        let pos = if let Some(spawns) = hero_spawns {
+            if !spawns.is_empty() { spawns[i % spawns.len()] }
+            else { sim_vec2(2.0 + (i as f32) * (6.0 / hero_tomls.len().max(1) as f32), 5.0) }
+        } else {
+            sim_vec2(2.0 + (i as f32) * (6.0 / hero_tomls.len().max(1) as f32), 5.0)
+        };
+        units.push(hero_toml_to_unit(toml, next_id, Team::Hero, pos));
         next_id += 1;
     }
 
-    // Team B (Enemy) — positioned along x=12..18, y=15
+    // Team B (Enemy)
     for (i, toml) in enemy_tomls.iter().enumerate() {
-        let x = 12.0 + (i as f32) * (6.0 / enemy_tomls.len().max(1) as f32);
-        units.push(hero_toml_to_unit(toml, next_id, Team::Enemy, sim_vec2(x, 15.0)));
+        let pos = if let Some(spawns) = enemy_spawns {
+            if !spawns.is_empty() { spawns[i % spawns.len()] }
+            else { sim_vec2(12.0 + (i as f32) * (6.0 / enemy_tomls.len().max(1) as f32), 15.0) }
+        } else {
+            sim_vec2(12.0 + (i as f32) * (6.0 / enemy_tomls.len().max(1) as f32), 15.0)
+        };
+        units.push(hero_toml_to_unit(toml, next_id, Team::Enemy, pos));
         next_id += 1;
     }
 
@@ -178,7 +198,47 @@ pub fn run_scenario_to_state(
     let manifest = load_manifest(cfg.manifest_path.as_deref());
     let manifest_ref = manifest.as_ref();
 
-    let mut sim = if !cfg.enemy_hero_templates.is_empty() {
+    let mut sim = if !cfg.enemy_units.is_empty() {
+        // Drill mode: spawn enemies from EnemyUnitDef definitions
+        let hero_tomls = resolve_hero_templates(&cfg.hero_templates, manifest_ref);
+        let mut enemy_templates: Vec<String> = Vec::new();
+        for eu in &cfg.enemy_units {
+            if let Some(ref tmpl) = eu.template {
+                enemy_templates.push(tmpl.clone());
+            }
+        }
+        let enemy_tomls = resolve_hero_templates(&enemy_templates, manifest_ref);
+        let mut s = build_hero_vs_hero(&hero_tomls, &enemy_tomls, cfg.seed);
+
+        // Apply per-unit overrides from EnemyUnitDef
+        let enemy_ids: Vec<u32> = s.units.iter()
+            .filter(|u| u.team == Team::Enemy)
+            .map(|u| u.id)
+            .collect();
+        for (i, eu) in cfg.enemy_units.iter().enumerate() {
+            if let Some(&uid) = enemy_ids.get(i) {
+                if let Some(unit) = s.units.iter_mut().find(|u| u.id == uid) {
+                    if let Some(hp) = eu.hp_override {
+                        unit.hp = hp;
+                        unit.max_hp = hp;
+                    }
+                    if let Some(dps) = eu.dps_override {
+                        unit.attack_damage = (dps * 0.5) as i32;
+                    }
+                    if let Some(range) = eu.range_override {
+                        unit.attack_range = range;
+                    }
+                    if let Some(speed) = eu.move_speed_override {
+                        unit.move_speed_per_sec = speed;
+                    }
+                    if let Some(ref pos) = eu.position {
+                        unit.position = SimVec2 { x: pos[0], y: pos[1] };
+                    }
+                }
+            }
+        }
+        s
+    } else if !cfg.enemy_hero_templates.is_empty() {
         // Hero vs Hero mode
         let hero_tomls = resolve_hero_templates(&cfg.hero_templates, manifest_ref);
         let enemy_tomls = resolve_hero_templates(&cfg.enemy_hero_templates, manifest_ref);
@@ -231,6 +291,74 @@ pub fn navgrid_to_gridnav(nav: &NavGrid) -> GridNav {
     nav.to_gridnav()
 }
 
+/// Score spawn zone quality for terrain balance checking.
+/// Returns a composite score based on nearby cover and average elevation.
+fn score_spawn_quality(nav: &NavGrid, positions: &[SimVec2]) -> f32 {
+    if positions.is_empty() {
+        return 0.0;
+    }
+    let grid_nav = nav.to_gridnav();
+    let mut total_cover = 0.0f32;
+    let mut total_elev = 0.0f32;
+    for pos in positions {
+        // Count blocked neighbors within radius 3 as cover
+        let cell = grid_nav.cell_of(*pos);
+        for dx in -3..=3i32 {
+            for dy in -3..=3i32 {
+                if grid_nav.blocked.contains(&(cell.0 + dx, cell.1 + dy)) {
+                    total_cover += 1.0;
+                }
+            }
+        }
+        total_elev += grid_nav.elevation_at_pos(*pos);
+    }
+    let n = positions.len() as f32;
+    (total_cover / n) + (total_elev / n)
+}
+
+/// Find the nearest walkable cell to the given world-space position.
+fn find_nearest_walkable(nav: &NavGrid, x: f32, y: f32) -> SimVec2 {
+    let center_c = (x as usize).min(nav.cols.saturating_sub(1));
+    let center_r = (y as usize).min(nav.rows.saturating_sub(1));
+
+    // Check center first
+    if nav.walkable[center_r * nav.cols + center_c] {
+        return nav.cell_centre(center_c, center_r);
+    }
+
+    // Spiral outward
+    let mut best = nav.cell_centre(center_c, center_r);
+    let mut best_dist = f32::MAX;
+    let max_radius = nav.cols.max(nav.rows);
+    for r in 1..max_radius {
+        for dr in -(r as isize)..=(r as isize) {
+            for dc in -(r as isize)..=(r as isize) {
+                if dr.unsigned_abs() != r && dc.unsigned_abs() != r {
+                    continue; // only check the ring perimeter
+                }
+                let c = center_c as isize + dc;
+                let row = center_r as isize + dr;
+                if c < 0 || row < 0 || c as usize >= nav.cols || row as usize >= nav.rows {
+                    continue;
+                }
+                let (uc, ur) = (c as usize, row as usize);
+                if nav.walkable[ur * nav.cols + uc] {
+                    let pos = nav.cell_centre(uc, ur);
+                    let d = (pos.x - x) * (pos.x - x) + (pos.y - y) * (pos.y - y);
+                    if d < best_dist {
+                        best_dist = d;
+                        best = pos;
+                    }
+                }
+            }
+        }
+        if best_dist < f32::MAX {
+            return best;
+        }
+    }
+    best
+}
+
 /// Build the initial SimState, unified AI, **and** a [`GridNav`] derived from
 /// the scenario's room layout.
 pub fn run_scenario_to_state_with_room(
@@ -246,10 +374,54 @@ pub fn run_scenario_to_state_with_room(
     let manifest = load_manifest(cfg.manifest_path.as_deref());
     let manifest_ref = manifest.as_ref();
 
-    let mut sim = if !cfg.enemy_hero_templates.is_empty() {
+    let mut sim = if !cfg.enemy_units.is_empty() {
+        // Drill mode with room-aware spawns
+        let hero_tomls = resolve_hero_templates(&cfg.hero_templates, manifest_ref);
+        let mut enemy_templates: Vec<String> = Vec::new();
+        for eu in &cfg.enemy_units {
+            if let Some(ref tmpl) = eu.template {
+                enemy_templates.push(tmpl.clone());
+            }
+        }
+        let enemy_tomls = resolve_hero_templates(&enemy_templates, manifest_ref);
+        let mut s = build_hero_vs_hero_with_spawns(
+            &hero_tomls, &enemy_tomls, cfg.seed,
+            Some(&layout.player_spawn.positions),
+            Some(&layout.enemy_spawn.positions),
+        );
+        // Apply overrides
+        let enemy_ids: Vec<u32> = s.units.iter()
+            .filter(|u| u.team == Team::Enemy).map(|u| u.id).collect();
+        for (i, eu) in cfg.enemy_units.iter().enumerate() {
+            if let Some(&uid) = enemy_ids.get(i) {
+                if let Some(unit) = s.units.iter_mut().find(|u| u.id == uid) {
+                    if let Some(hp) = eu.hp_override {
+                        unit.hp = hp; unit.max_hp = hp;
+                    }
+                    if let Some(dps) = eu.dps_override {
+                        unit.attack_damage = (dps * 0.5) as i32;
+                    }
+                    if let Some(range) = eu.range_override {
+                        unit.attack_range = range;
+                    }
+                    if let Some(speed) = eu.move_speed_override {
+                        unit.move_speed_per_sec = speed;
+                    }
+                    if let Some(ref pos) = eu.position {
+                        unit.position = SimVec2 { x: pos[0], y: pos[1] };
+                    }
+                }
+            }
+        }
+        s
+    } else if !cfg.enemy_hero_templates.is_empty() {
         let hero_tomls = resolve_hero_templates(&cfg.hero_templates, manifest_ref);
         let enemy_tomls = resolve_hero_templates(&cfg.enemy_hero_templates, manifest_ref);
-        build_hero_vs_hero(&hero_tomls, &enemy_tomls, cfg.seed)
+        build_hero_vs_hero_with_spawns(
+            &hero_tomls, &enemy_tomls, cfg.seed,
+            Some(&layout.player_spawn.positions),
+            Some(&layout.enemy_spawn.positions),
+        )
     } else {
         let enemy_spawns = &layout.enemy_spawn.positions;
         let spawn_positions: Vec<SimVec2> = (0..cfg.enemy_count)
@@ -287,26 +459,40 @@ pub fn run_scenario_to_state_with_room(
         }
     }
 
-    let hero_spawns = &layout.player_spawn.positions;
-    if !hero_spawns.is_empty() {
-        let mut hi = 0;
+    // For drills, spawn heroes at room center for uniform position token coverage.
+    // For non-drill scenarios, use the room's player spawn zone.
+    if cfg.drill_type.is_some() {
+        let cx = layout.width / 2.0;
+        let cy = layout.depth / 2.0;
+        // Find nearest walkable cell to center
+        let center = find_nearest_walkable(&layout.nav, cx, cy);
         for unit in sim.units.iter_mut().filter(|u| u.team == Team::Hero) {
-            unit.position = hero_spawns[hi % hero_spawns.len()];
-            hi += 1;
+            unit.position = center;
+        }
+    } else {
+        let hero_spawns = &layout.player_spawn.positions;
+        if !hero_spawns.is_empty() {
+            let mut hi = 0;
+            for unit in sim.units.iter_mut().filter(|u| u.team == Team::Hero) {
+                unit.position = hero_spawns[hi % hero_spawns.len()];
+                hi += 1;
+            }
         }
     }
 
-    let grid_nav = navgrid_to_gridnav(&layout.nav);
-    // Only inject grid_nav into SimState if a hero has obstacle abilities,
-    // as A* pathfinding on every tick is expensive for batch testing.
-    let has_obstacle_ability = sim.units.iter()
-        .filter(|u| u.team == Team::Hero)
-        .any(|u| u.abilities.iter().any(|s| {
-            s.def.effects.iter().any(|ce| matches!(ce.effect, crate::ai::effects::Effect::Obstacle { .. }))
-        }));
-    if has_obstacle_ability {
-        sim.grid_nav = Some(grid_nav.clone());
+    // Spawn quality balance check
+    let player_quality = score_spawn_quality(&layout.nav, &layout.player_spawn.positions);
+    let enemy_quality = score_spawn_quality(&layout.nav, &layout.enemy_spawn.positions);
+    let quality_diff = (player_quality - enemy_quality).abs();
+    if quality_diff > 5.0 {
+        eprintln!(
+            "Warning: spawn quality imbalance {:.1} (player={:.1}, enemy={:.1}) for seed={} room={:?}",
+            quality_diff, player_quality, enemy_quality, cfg.seed, room_type,
+        );
     }
+
+    let grid_nav = navgrid_to_gridnav(&layout.nav);
+    sim.grid_nav = Some(grid_nav.clone());
     let squad_state = build_unified_ai(&sim);
     (sim, squad_state, grid_nav)
 }

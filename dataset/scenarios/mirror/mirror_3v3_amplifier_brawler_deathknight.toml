@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_brawler_deathknight"
+seed = 28873
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "brawler", "deathknight"]
+enemy_hero_templates = ["amplifier", "brawler", "deathknight"]
+max_ticks = 800
+room_type = "Pressure"

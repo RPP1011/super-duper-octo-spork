@@ -1,0 +1,26 @@
+[scenario]
+name = "drill_2_1_kite_15694"
+seed = 15694
+hero_count = 1
+enemy_count = 0
+max_ticks = 500
+room_type = "Setpiece"
+hero_templates = [
+    "scout",
+]
+enemy_hero_templates = []
+drill_type = "survive"
+action_mask = "move_only"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "brute"
+hp_override = 9999
+dps_override = 30.0
+range_override = 1.5
+move_speed_override = 2.5
+
+[scenario.objective]
+objective_type = "survive"
+duration = 500
+max_damage_taken = 0.0

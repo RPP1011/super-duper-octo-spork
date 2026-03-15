@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_buffer"
+seed = 69429
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "buffer"]
+enemy_hero_templates = ["archmage", "buffer"]
+max_ticks = 800
+room_type = "Pressure"

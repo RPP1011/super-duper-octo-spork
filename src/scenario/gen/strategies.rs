@@ -1,19 +1,33 @@
-//! Main generation function and all strategy implementations, emit helpers, write_scenarios.
-
-use std::path::Path;
+//! Main generation function and core strategy implementations (1-4), helpers.
 
 use super::super::types::{ScenarioAssert, ScenarioCfg, ScenarioFile};
 use super::coverage::CoverageTracker;
 use super::metadata::{
-    heroes_by_role, Role, ALL_HEROES, ALL_LOL_HEROES, ROOM_TYPES, DedupSet, Lcg,
+    heroes_by_role, Role, ALL_HEROES, ROOM_TYPES, DedupSet, Lcg,
 };
+use super::strategies_advanced;
 use super::GenConfig;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn build_scenario(
+/// Estimated blocked percentage by room type, used for terrain-aware
+/// difficulty scaling.  Small, obstacle-dense rooms get fewer enemies
+/// so units aren't stacked on top of each other.
+fn room_blocked_estimate(room: &str) -> f32 {
+    match room {
+        "Pressure" => 0.20,
+        "Pivot" => 0.15,
+        "Setpiece" => 0.12,
+        "Climax" => 0.12,
+        "Entry" => 0.10,
+        "Recovery" => 0.08,
+        _ => 0.0, // Open / unknown
+    }
+}
+
+pub(super) fn build_scenario(
     name: String,
     heroes: Vec<String>,
     enemy_count: usize,
@@ -23,12 +37,17 @@ fn build_scenario(
     seed: u64,
     max_ticks: u64,
 ) -> ScenarioFile {
+    // Terrain-aware difficulty scaling: reduce enemy count for high-blocked rooms
+    let blocked_pct = room_blocked_estimate(room_type);
+    let scaled_enemy_count = (enemy_count as f32 * (1.0 - blocked_pct * 0.3)).round() as usize;
+    let final_enemy_count = scaled_enemy_count.max(1);
+
     ScenarioFile {
         scenario: ScenarioCfg {
             name,
             seed,
             hero_count: heroes.len(),
-            enemy_count,
+            enemy_count: final_enemy_count,
             difficulty,
             max_ticks,
             room_type: room_type.to_string(),
@@ -36,6 +55,12 @@ fn build_scenario(
             enemy_hero_templates: Vec::new(),
             hp_multiplier: hp_mult,
             manifest_path: None,
+            drill_type: None,
+            target_position: None,
+            enemy_units: Vec::new(),
+            hazards: Vec::new(),
+            objective: None,
+            action_mask: None,
         },
         assert: Some(ScenarioAssert {
             outcome: Some("Any".to_string()),
@@ -46,7 +71,7 @@ fn build_scenario(
     }
 }
 
-fn build_hvh_scenario(
+pub(super) fn build_hvh_scenario(
     name: String,
     heroes: Vec<String>,
     enemy_heroes: Vec<String>,
@@ -68,6 +93,12 @@ fn build_hvh_scenario(
             enemy_hero_templates: enemy_heroes,
             hp_multiplier: hp_mult,
             manifest_path: None,
+            drill_type: None,
+            target_position: None,
+            enemy_units: Vec::new(),
+            hazards: Vec::new(),
+            objective: None,
+            action_mask: None,
         },
         assert: Some(ScenarioAssert {
             outcome: Some("Any".to_string()),
@@ -78,7 +109,7 @@ fn build_hvh_scenario(
     }
 }
 
-fn to_toml(file: &ScenarioFile) -> String {
+pub(super) fn to_toml(file: &ScenarioFile) -> String {
     let cfg = &file.scenario;
     let heroes_str = cfg.hero_templates.iter()
         .map(|h| format!("\"{}\"", h))
@@ -134,7 +165,7 @@ fn room_role_affinity(room: &str) -> &'static [Role] {
 // Emit helper — dedup + optional seed variants
 // ---------------------------------------------------------------------------
 
-fn emit(
+pub(super) fn emit(
     scenario: ScenarioFile,
     seed_variants: u32,
     out: &mut Vec<ScenarioFile>,
@@ -173,15 +204,13 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
     let sv = config.seed_variants;
 
     // -----------------------------------------------------------------------
-    // 1. Synergy pairs — every unique hero pair in a small scenario
-    //    27 heroes = 351 pairs, ~351-702 scenarios with variants
+    // 1. Synergy pairs
     // -----------------------------------------------------------------------
     if config.include_synergy_pairs {
         for i in 0..hero_names.len() {
             for j in (i + 1)..hero_names.len() {
                 let (a, b) = (hero_names[i], hero_names[j]);
 
-                // 2v3: just the pair
                 let room = *rng.choose(ROOM_TYPES);
                 let diff = (rng.next_usize(2) + 1) as u32;
                 let seed = next_seed();
@@ -192,7 +221,6 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
                 );
                 emit(s, sv, &mut out, &mut dedup, &mut coverage);
 
-                // 3v4: pair + random third, different room
                 let filler = loop {
                     let h = rng.choose(&hero_names);
                     if *h != a && *h != b { break *h; }
@@ -211,7 +239,6 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
 
     // -----------------------------------------------------------------------
     // 2. Stress archetypes x all rooms
-    //    ~12 archetypes x 6 rooms = 72 base scenarios
     // -----------------------------------------------------------------------
     if config.include_stress_archetypes {
         let archetypes: &[(&str, &[Role], usize, u32)] = &[
@@ -247,8 +274,7 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
     }
 
     // -----------------------------------------------------------------------
-    // 3. Difficulty ladders — same comp across d1→d5 x hp{1,3}
-    //    6 comps x 5 diffs x 2 hp = 60 base scenarios
+    // 3. Difficulty ladders
     // -----------------------------------------------------------------------
     if config.include_difficulty_ladders {
         let ladder_parties: &[&[&str]] = &[
@@ -278,8 +304,7 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
     }
 
     // -----------------------------------------------------------------------
-    // 4. Room-aware compositions — fit & mismatch per room
-    //    6 rooms x (3 fit + 1 mismatch) = 24 base scenarios
+    // 4. Room-aware compositions
     // -----------------------------------------------------------------------
     if config.include_room_aware {
         for room in ROOM_TYPES {
@@ -301,7 +326,6 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
                 emit(s, sv, &mut out, &mut dedup, &mut coverage);
             }
 
-            // Mismatch
             let all_roles = [Role::Tank, Role::Healer, Role::MeleeDps, Role::RangedDps, Role::Hybrid];
             let mismatch: Vec<Role> = all_roles.iter()
                 .filter(|r| !preferred.contains(r))
@@ -323,145 +347,30 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
     }
 
     // -----------------------------------------------------------------------
-    // 5. Team size spectrum — 2 scenarios per size bracket
-    //    19 sizes x 2 = 38 base scenarios
+    // 5-7. Delegated to strategies_advanced
     // -----------------------------------------------------------------------
     if config.include_size_spectrum {
-        let sizes: &[(usize, usize)] = &[
-            (1, 2), (1, 3),
-            (2, 2), (2, 3), (2, 4),
-            (3, 3), (3, 4), (3, 5),
-            (4, 4), (4, 5), (4, 6), (4, 8),
-            (5, 5), (5, 6), (5, 7),
-            (6, 6), (6, 8),
-            (8, 8), (8, 10),
-        ];
-
-        for (hc, ec) in sizes {
-            for _ in 0..2 {
-                let party: Vec<String> = rng.sample_n(&hero_names, *hc)
-                    .into_iter().map(|s| s.to_string()).collect();
-                let diff = (rng.next_usize(3) + 1) as u32;
-                let room = *rng.choose(ROOM_TYPES);
-                let hp = if *ec > *hc + 2 { 2.0 } else { 1.0 };
-                let seed = next_seed();
-                let name = format!("size_{hc}v{ec}_{}", out.len());
-                let s = build_scenario(name, party, *ec, diff, hp, room, seed, 10_000);
-                emit(s, sv, &mut out, &mut dedup, &mut coverage);
-            }
-        }
+        strategies_advanced::generate_size_spectrum(
+            config, &mut rng, &mut next_seed, &hero_names,
+            &mut out, &mut dedup, &mut coverage,
+        );
     }
 
-    // -----------------------------------------------------------------------
-    // 6. Hero vs Hero — mixed standard + LoL matchups
-    //    Generates diverse team compositions fighting each other
-    // -----------------------------------------------------------------------
     if config.include_hero_vs_hero {
-        let all_names: Vec<&str> = ALL_HEROES.iter().chain(ALL_LOL_HEROES.iter())
-            .map(|h| h.name).collect();
-        let std_names: Vec<&str> = ALL_HEROES.iter().map(|h| h.name).collect();
-        let lol_names: Vec<&str> = ALL_LOL_HEROES.iter().map(|h| h.name).collect();
-
-        for i in 0..config.hvh_count {
-            let team_size = match rng.next_usize(6) {
-                0 => 2,
-                1..=2 => 3,
-                3..=4 => 4,
-                _ => 5,
-            };
-
-            // Composition strategy for matchup variety
-            let (team_a, team_b) = match rng.next_usize(5) {
-                0 => {
-                    // Standard vs Standard
-                    let a: Vec<String> = rng.sample_n(&std_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    let b: Vec<String> = rng.sample_n(&std_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    (a, b)
-                }
-                1 => {
-                    // LoL vs LoL
-                    let a: Vec<String> = rng.sample_n(&lol_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    let b: Vec<String> = rng.sample_n(&lol_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    (a, b)
-                }
-                2 => {
-                    // Standard vs LoL (cross-universe)
-                    let a: Vec<String> = rng.sample_n(&std_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    let b: Vec<String> = rng.sample_n(&lol_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    (a, b)
-                }
-                _ => {
-                    // Mixed pool — both teams from all heroes
-                    let a: Vec<String> = rng.sample_n(&all_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    let b: Vec<String> = rng.sample_n(&all_names, team_size).into_iter().map(|s| s.to_string()).collect();
-                    (a, b)
-                }
-            };
-
-            let room = *rng.choose(ROOM_TYPES);
-            let hp = *rng.choose(&[1.0f32, 2.0, 3.0]);
-            let seed = next_seed();
-            let name = format!("hvh_{i:04}_{team_size}v{team_size}");
-            let s = build_hvh_scenario(name, team_a, team_b, hp, room, seed, 8_000);
-            emit(s, sv, &mut out, &mut dedup, &mut coverage);
-        }
+        strategies_advanced::generate_hero_vs_hero(
+            config, &mut rng, &mut next_seed,
+            &mut out, &mut dedup, &mut coverage,
+        );
     }
 
-    // -----------------------------------------------------------------------
-    // 7. Coverage-driven random — fill gaps, boost undertested heroes
-    // -----------------------------------------------------------------------
-    {
-        for i in 0..config.extra_random {
-            let party_size = match rng.next_usize(10) {
-                0 => 2,
-                1..=2 => 3,
-                3..=6 => 4,
-                7..=8 => 5,
-                _ => 6,
-            };
-
-            // Anchor on least-seen hero
-            let anchor = coverage.least_seen_hero().to_string();
-            let mut party = vec![anchor];
-
-            for _ in 1..party_size {
-                let h = if rng.next_usize(3) == 0 {
-                    // Prefer undertested
-                    let mut candidates: Vec<&str> = hero_names.iter()
-                        .filter(|h| !party.iter().any(|p| p == **h))
-                        .copied()
-                        .collect();
-                    candidates.sort_by_key(|h| coverage.hero_appearances(h));
-                    candidates.first().unwrap_or(&"warrior").to_string()
-                } else {
-                    loop {
-                        let h = rng.choose(&hero_names);
-                        if !party.iter().any(|p| p == *h) { break h.to_string(); }
-                    }
-                };
-                party.push(h);
-            }
-
-            let ec = party.len() + rng.next_usize(4);
-            let diff = (rng.next_usize(5) + 1) as u32;
-            let room = if rng.next_usize(3) == 0 {
-                coverage.least_seen_room()
-            } else {
-                rng.choose(ROOM_TYPES)
-            };
-            let hp = *rng.choose(&[1.0f32, 1.0, 2.0, 3.0, 5.0]);
-            let seed = next_seed();
-
-            let name = format!("rand_{i:04}_{party_size}v{ec}_d{diff}");
-            let s = build_scenario(name, party, ec, diff, hp, room, seed, 10_000);
-            emit(s, sv, &mut out, &mut dedup, &mut coverage);
-        }
-    }
+    strategies_advanced::generate_random_fill(
+        config, &mut rng, &mut next_seed, &hero_names,
+        &mut out, &mut dedup, &mut coverage,
+    );
 
     if config.verbose {
         coverage.print_summary();
 
-        // Strategy breakdown
         let pair_count = out.iter().filter(|s| {
             let n = &s.scenario.name;
             n.starts_with("pair_") || n.starts_with("trio_")
@@ -487,33 +396,5 @@ pub fn generate(config: &GenConfig) -> Vec<ScenarioFile> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Write to disk
-// ---------------------------------------------------------------------------
-
-pub fn write_scenarios(scenarios: &[ScenarioFile], output_dir: &Path) -> Result<usize, String> {
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("Failed to create {}: {e}", output_dir.display()))?;
-
-    // Clean old generated files (only gen_*.toml to be safe)
-    if let Ok(entries) = std::fs::read_dir(output_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("gen_") && name.ends_with(".toml") {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-        }
-    }
-
-    for (i, scenario) in scenarios.iter().enumerate() {
-        let filename = format!("gen_{:04}.toml", i);
-        let path = output_dir.join(filename);
-        let content = to_toml(scenario);
-        std::fs::write(&path, content)
-            .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
-    }
-
-    Ok(scenarios.len())
-}
+// Re-export write_scenarios from the advanced module
+pub use strategies_advanced::write_scenarios;

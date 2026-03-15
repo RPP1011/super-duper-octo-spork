@@ -167,8 +167,11 @@ class OutcomeDataset:
     def __init__(self, path: Path):
         self.samples: list[dict] = []
         with open(path) as f:
-            for line in f:
-                self.samples.append(json.loads(line))
+            for i, line in enumerate(f):
+                sample = json.loads(line)
+                gs = sample["game_state"]
+                assert len(gs) == 210, f"Expected 210 game_state features, got {len(gs)} at line {i}"
+                self.samples.append(sample)
 
         print(f"Loaded {len(self.samples)} samples from {path}")
 
@@ -199,12 +202,14 @@ class OutcomeDataset:
     def sample_batch(self, batch_size: int) -> dict[str, torch.Tensor]:
         indices = random.choices(range(len(self.samples)), k=batch_size)
         batch = [self.samples[i] for i in indices]
-        return {
+        result = {
             "game_state": torch.tensor([s["game_state"] for s in batch], dtype=torch.float, device=DEVICE),
             "hero_wins": torch.tensor([s["hero_wins"] for s in batch], dtype=torch.float, device=DEVICE),
             "hero_hp": torch.tensor([s["hero_hp_remaining"] for s in batch], dtype=torch.float, device=DEVICE),
             "progress": torch.tensor([s["fight_progress"] for s in batch], dtype=torch.float, device=DEVICE),
         }
+        assert not torch.isnan(result["game_state"]).any(), "NaN detected in training batch"
+        return result
 
     def iter_batches(self, batch_size: int, shuffle: bool = True):
         indices = list(range(len(self.samples)))
@@ -214,12 +219,14 @@ class OutcomeDataset:
             batch_idx = indices[i:i + batch_size]
             if batch_idx:
                 batch = [self.samples[j] for j in batch_idx]
-                yield {
+                result = {
                     "game_state": torch.tensor([s["game_state"] for s in batch], dtype=torch.float, device=DEVICE),
                     "hero_wins": torch.tensor([s["hero_wins"] for s in batch], dtype=torch.float, device=DEVICE),
                     "hero_hp": torch.tensor([s["hero_hp_remaining"] for s in batch], dtype=torch.float, device=DEVICE),
                     "progress": torch.tensor([s["fight_progress"] for s in batch], dtype=torch.float, device=DEVICE),
                 }
+                assert not torch.isnan(result["game_state"]).any(), "NaN detected in training batch"
+                yield result
 
 
 # ---------------------------------------------------------------------------

@@ -144,6 +144,7 @@ def compute_gae(
         game_states = torch.tensor(
             [s["game_state"] for s in steps], dtype=torch.float32, device=DEVICE
         )
+        assert not torch.isnan(game_states).any(), "NaN in game_state during GAE computation"
         with torch.no_grad():
             values = value_fn(game_states).squeeze(-1).cpu().numpy()
 
@@ -220,6 +221,11 @@ def ppo_update(
     masks = torch.tensor([s["mask"] for s in steps], dtype=torch.bool, device=DEVICE)
     adv_tensor = torch.tensor(advantages, dtype=torch.float32, device=DEVICE)
     ret_tensor = torch.tensor(returns, dtype=torch.float32, device=DEVICE)
+
+    assert not torch.isnan(game_states).any(), "NaN in game_state input data"
+    assert not torch.isnan(old_log_probs).any(), "NaN in old_log_probs"
+    assert not torch.isnan(adv_tensor).any(), "NaN in advantages"
+    assert not torch.isnan(ret_tensor).any(), "NaN in returns"
 
     # Normalize advantages
     adv_tensor = (adv_tensor - adv_tensor.mean()) / (adv_tensor.std() + 1e-8)

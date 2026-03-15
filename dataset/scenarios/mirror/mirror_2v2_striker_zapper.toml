@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_striker_zapper"
+seed = 29342
+hero_count = 2
+enemy_count = 0
+hero_templates = ["striker", "zapper"]
+enemy_hero_templates = ["striker", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

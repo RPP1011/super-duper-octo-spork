@@ -13,6 +13,7 @@ pub fn apply_morph(caster_idx: usize, ability_index: usize, slot: &AbilitySlot, 
     if ability_slot.base_def.is_some() {
         if let Some(base) = ability_slot.base_def.take() {
             ability_slot.def = *base;
+            ability_slot.morph_remaining_ms = 0;
         }
     } else if let Some(ref morph_into) = slot.def.morph_into {
         ability_slot.base_def = Some(Box::new(slot.def.clone()));
@@ -36,6 +37,7 @@ pub fn apply_form_swap(caster_idx: usize, form_tag: &str, state: &mut SimState) 
         if slot.base_def.is_some() {
             if let Some(base) = slot.base_def.take() {
                 slot.def = *base;
+                slot.morph_remaining_ms = 0;
             }
         } else if let Some(ref morph_into) = slot.def.morph_into.clone() {
             slot.base_def = Some(Box::new(slot.def.clone()));

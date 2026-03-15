@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_healer_slower"
+seed = 11064
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "healer", "slower"]
+enemy_hero_templates = ["bulwark", "healer", "slower"]
+max_ticks = 800
+room_type = "Pressure"

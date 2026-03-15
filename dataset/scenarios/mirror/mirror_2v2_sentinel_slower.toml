@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_sentinel_slower"
+seed = 59695
+hero_count = 2
+enemy_count = 0
+hero_templates = ["sentinel", "slower"]
+enemy_hero_templates = ["sentinel", "slower"]
+max_ticks = 800
+room_type = "Pressure"

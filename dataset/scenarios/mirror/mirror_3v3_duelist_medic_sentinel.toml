@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_duelist_medic_sentinel"
+seed = 61115
+hero_count = 3
+enemy_count = 0
+hero_templates = ["duelist", "medic", "sentinel"]
+enemy_hero_templates = ["duelist", "medic", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

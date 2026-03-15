@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_paladin"
+seed = 89840
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "paladin"]
+enemy_hero_templates = ["archmage", "paladin"]
+max_ticks = 800
+room_type = "Pressure"

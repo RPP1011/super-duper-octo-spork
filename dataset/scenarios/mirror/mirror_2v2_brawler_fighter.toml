@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brawler_fighter"
+seed = 61856
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brawler", "fighter"]
+enemy_hero_templates = ["brawler", "fighter"]
+max_ticks = 800
+room_type = "Pressure"

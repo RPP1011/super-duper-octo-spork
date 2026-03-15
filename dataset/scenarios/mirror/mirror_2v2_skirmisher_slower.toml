@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_skirmisher_slower"
+seed = 47196
+hero_count = 2
+enemy_count = 0
+hero_templates = ["skirmisher", "slower"]
+enemy_hero_templates = ["skirmisher", "slower"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,20 @@
+[scenario]
+name = "drill_3_11_elevation_21873"
+seed = 21873
+hero_count = 1
+enemy_count = 0
+max_ticks = 400
+room_type = "Setpiece"
+hero_templates = [
+    "archer",
+]
+enemy_hero_templates = []
+drill_type = "elevation"
+action_mask = "move_attack"
+enemy_units = [
+    { behavior = "melee_chaser", template = "brute", hp_override = 500, dps_override = 20.0 },
+    { behavior = "melee_chaser", template = "brute", hp_override = 500, dps_override = 20.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

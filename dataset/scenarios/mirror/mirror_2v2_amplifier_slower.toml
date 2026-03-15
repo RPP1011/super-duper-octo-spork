@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_amplifier_slower"
+seed = 68878
+hero_count = 2
+enemy_count = 0
+hero_templates = ["amplifier", "slower"]
+enemy_hero_templates = ["amplifier", "slower"]
+max_ticks = 800
+room_type = "Pressure"

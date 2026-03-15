@@ -2,6 +2,7 @@ mod lcg;
 mod nav;
 mod primitives;
 mod templates;
+mod validation;
 mod visuals;
 
 pub use nav::{NavGrid, SpawnZone};
@@ -10,6 +11,7 @@ pub use visuals::{spawn_room, RoomFloor, RoomObstacle, RoomWall};
 use crate::game_core;
 
 use lcg::{Lcg, ObstacleRegion, RampRegion};
+use validation::validate_layout;
 
 // ---------------------------------------------------------------------------
 // Room layout
@@ -39,125 +41,90 @@ pub struct RoomLayout {
 fn room_dimensions(rt: game_core::RoomType) -> (f32, f32) {
     match rt {
         game_core::RoomType::Entry => (20.0, 20.0),
-        game_core::RoomType::Pressure => (28.0, 14.0),
+        game_core::RoomType::Pressure => (10.0, 10.0),
         game_core::RoomType::Pivot => (16.0, 16.0),
         game_core::RoomType::Setpiece => (32.0, 32.0),
         game_core::RoomType::Recovery => (18.0, 18.0),
         game_core::RoomType::Climax => (30.0, 30.0),
+        game_core::RoomType::Open => (100.0, 100.0),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Constraint Validation
+// Composite obstacle generation
 // ---------------------------------------------------------------------------
 
-/// Check that a layout has 5%-35% blocked interior and player<->enemy connectivity.
-fn validate_layout(nav: &NavGrid) -> bool {
+/// Generate obstacles by compositing multiple primitive types for greater variety.
+/// Uses the LCG to randomly select 2-3 primitive generators and layer them.
+fn generate_composite_obstacles(
+    nav: &mut NavGrid,
+    rng: &mut Lcg,
+) -> Vec<lcg::ObstacleRegion> {
     let cols = nav.cols;
     let rows = nav.rows;
 
-    let mut total_interior = 0usize;
-    let mut blocked = 0usize;
-    for r in 1..rows - 1 {
-        for c in 1..cols - 1 {
-            total_interior += 1;
-            if !nav.walkable[r * cols + c] {
-                blocked += 1;
-            }
+    // Each generator is a closure that places obstacles using primitives with
+    // randomized positions derived from the grid dimensions.
+    type GenFn = fn(&mut NavGrid, &mut Lcg, usize, usize) -> Vec<lcg::ObstacleRegion>;
+
+    let generators: &[GenFn] = &[
+        // Pillar grid in centre
+        |nav, rng, cols, rows| {
+            let spacing = rng.next_usize_range(2, 4);
+            primitives::place_pillar_grid(
+                nav, rng, cols / 4, rows / 4, 3 * cols / 4, 3 * rows / 4,
+                spacing, 1, 1.5,
+            )
+        },
+        // Horizontal wall segment with variable gap
+        |nav, rng, cols, rows| {
+            let gap = rng.next_usize_range(1, 3);
+            primitives::place_wall_segment(
+                nav, rng, cols / 4, rows / 2, cols / 2, true, gap, 1.5,
+            )
+        },
+        // L-shape cover
+        |nav, rng, cols, rows| {
+            let arm = rng.next_usize_range(2, 4);
+            let orient = rng.next_usize_range(0, 3);
+            primitives::place_l_shape(
+                nav, rng, cols / 3, rows / 3, arm, 1, orient, 1.5,
+            )
+        },
+        // Barricade line
+        |nav, rng, cols, rows| {
+            let seg = rng.next_usize_range(2, 4);
+            let gap = rng.next_usize_range(1, 3);
+            primitives::place_barricade_line(
+                nav, rng, cols / 4, 3 * cols / 4, rows / 2, seg, gap, 1.2,
+            )
+        },
+        // Cover cluster
+        |nav, rng, cols, rows| {
+            primitives::place_cover_cluster(
+                nav, rng, cols / 2, rows / 2, 3, 3, 1.0,
+            )
+        },
+        // Sandbag arc
+        |nav, rng, cols, rows| {
+            primitives::place_sandbag_arc(
+                nav, rng, cols / 2, rows / 2, 3, 5, 0.7,
+            )
+        },
+    ];
+
+    // Pick 2-3 generators without repeats
+    let count = 2 + rng.next_usize_range(0, 1);
+    let mut used = Vec::new();
+    let mut obs = Vec::new();
+    for _ in 0..count {
+        let idx = rng.next_usize_range(0, generators.len() - 1);
+        if !used.contains(&idx) {
+            used.push(idx);
+            obs.extend(generators[idx](nav, rng, cols, rows));
         }
     }
-
-    if total_interior == 0 {
-        return false;
-    }
-
-    let pct = (blocked as f32) / (total_interior as f32);
-    if pct < 0.02 || pct > 0.35 {
-        return false;
-    }
-
-    let player_col = cols / 6;
-    let enemy_col = cols - cols / 6;
-    let mid_row = rows / 2;
-
-    let start = match find_nearest_walkable(nav, player_col, mid_row) {
-        Some(pos) => pos,
-        None => return false,
-    };
-    let goal = match find_nearest_walkable(nav, enemy_col, mid_row) {
-        Some(pos) => pos,
-        None => return false,
-    };
-
-    cells_connected(nav, start.0, start.1, goal.0, goal.1)
-}
-
-/// 4-directional BFS flood-fill; returns true if goal is reachable from start.
-fn cells_connected(
-    nav: &NavGrid,
-    start_col: usize,
-    start_row: usize,
-    goal_col: usize,
-    goal_row: usize,
-) -> bool {
-    let cols = nav.cols;
-    let rows = nav.rows;
-    let mut visited = vec![false; cols * rows];
-    let mut queue = std::collections::VecDeque::new();
-
-    let start_idx = start_row * cols + start_col;
-    visited[start_idx] = true;
-    queue.push_back((start_col, start_row));
-
-    while let Some((c, r)) = queue.pop_front() {
-        if c == goal_col && r == goal_row {
-            return true;
-        }
-        for &(dc, dr) in &[(0isize, -1isize), (0, 1), (-1, 0), (1, 0)] {
-            let nc = c as isize + dc;
-            let nr = r as isize + dr;
-            if nc < 0 || nr < 0 || nc >= cols as isize || nr >= rows as isize {
-                continue;
-            }
-            let nc = nc as usize;
-            let nr = nr as usize;
-            let idx = nr * cols + nc;
-            if !visited[idx] && nav.walkable[idx] {
-                visited[idx] = true;
-                queue.push_back((nc, nr));
-            }
-        }
-    }
-    false
-}
-
-/// Expanding-square search for the nearest walkable cell from a target.
-fn find_nearest_walkable(nav: &NavGrid, col: usize, row: usize) -> Option<(usize, usize)> {
-    let cols = nav.cols;
-    let rows = nav.rows;
-
-    if col < cols && row < rows && nav.walkable[row * cols + col] {
-        return Some((col, row));
-    }
-
-    for radius in 1..cols.max(rows) {
-        let r_min = row.saturating_sub(radius);
-        let r_max = (row + radius).min(rows - 1);
-        let c_min = col.saturating_sub(radius);
-        let c_max = (col + radius).min(cols - 1);
-
-        for r in r_min..=r_max {
-            for c in c_min..=c_max {
-                if r != r_min && r != r_max && c != c_min && c != c_max {
-                    continue;
-                }
-                if nav.walkable[r * cols + c] {
-                    return Some((c, r));
-                }
-            }
-        }
-    }
-    None
+    obs
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +152,9 @@ pub fn generate_room(seed: u64, room_type: game_core::RoomType) -> RoomLayout {
 
         let obstacles = if attempt == 5 {
             templates::generate_fallback_obstacles(&mut nav, &mut rng)
+        } else if room_type != game_core::RoomType::Open && rng.next_usize_range(0, 3) == 0 {
+            // 25% chance: composite generation (layer 2-3 primitives)
+            generate_composite_obstacles(&mut nav, &mut rng)
         } else {
             match room_type {
                 game_core::RoomType::Entry => templates::generate_entry_obstacles(&mut nav, &mut rng),
@@ -193,6 +163,7 @@ pub fn generate_room(seed: u64, room_type: game_core::RoomType) -> RoomLayout {
                 game_core::RoomType::Setpiece => templates::generate_setpiece_obstacles(&mut nav, &mut rng),
                 game_core::RoomType::Recovery => templates::generate_recovery_obstacles(&mut nav, &mut rng),
                 game_core::RoomType::Climax => templates::generate_climax_obstacles(&mut nav, &mut rng),
+                game_core::RoomType::Open => Vec::new(), // no obstacles
             }
         };
 

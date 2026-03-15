@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_duelist_sniper"
+seed = 20745
+hero_count = 2
+enemy_count = 0
+hero_templates = ["duelist", "sniper"]
+enemy_hero_templates = ["duelist", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

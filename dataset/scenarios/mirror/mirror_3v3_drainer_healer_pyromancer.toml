@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_drainer_healer_pyromancer"
+seed = 66585
+hero_count = 3
+enemy_count = 0
+hero_templates = ["drainer", "healer", "pyromancer"]
+enemy_hero_templates = ["drainer", "healer", "pyromancer"]
+max_ticks = 800
+room_type = "Pressure"

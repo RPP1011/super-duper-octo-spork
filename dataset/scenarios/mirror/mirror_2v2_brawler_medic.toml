@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brawler_medic"
+seed = 28726
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brawler", "medic"]
+enemy_hero_templates = ["brawler", "medic"]
+max_ticks = 800
+room_type = "Pressure"

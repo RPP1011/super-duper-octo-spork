@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_pyromancer_sniper"
+seed = 57739
+hero_count = 2
+enemy_count = 0
+hero_templates = ["pyromancer", "sniper"]
+enemy_hero_templates = ["pyromancer", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

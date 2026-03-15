@@ -5,6 +5,8 @@
 
 pub mod features;
 pub mod actions;
+pub mod actions_pointer;
+pub mod actions_dual_head;
 pub mod policy;
 pub mod episode;
 

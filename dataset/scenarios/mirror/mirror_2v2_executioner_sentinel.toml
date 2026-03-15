@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_executioner_sentinel"
+seed = 94607
+hero_count = 2
+enemy_count = 0
+hero_templates = ["executioner", "sentinel"]
+enemy_hero_templates = ["executioner", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

@@ -102,12 +102,12 @@ fn phase5_competent_and_safe() {
 #[test]
 fn phase5_regression_snapshot() {
     let run = run_phase5(31);
-    assert_eq!(run.replay.event_log_hash, 0x8d03_5a97_0ee4_d0d0);
-    assert_eq!(run.replay.final_state_hash, 0x5f4d_5cfd_8a52_119e);
-    assert_eq!(run.replay.metrics.winner, Some(crate::ai::core::Team::Hero));
+    assert_eq!(run.replay.event_log_hash, 0x2df8_c3e7_3dbd_7c93);
+    assert_eq!(run.replay.final_state_hash, 0x2fab_b081_1b37_917f);
+    assert_eq!(run.replay.metrics.winner, Some(crate::ai::core::Team::Enemy));
     assert_eq!(
         run.replay.metrics.final_hp_by_unit,
-        vec![(1, 130), (2, 32), (3, 67), (4, 0), (5, 0), (6, 0)]
+        vec![(1, 0), (2, 0), (3, 0), (4, 22), (5, 0), (6, 0)]
     );
     assert_eq!(run.replay.metrics.invariant_violations, 0);
 }

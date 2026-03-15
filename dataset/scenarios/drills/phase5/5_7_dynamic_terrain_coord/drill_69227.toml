@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_5_7_terrain_coord_69227"
+seed = 69227
+hero_count = 2
+enemy_count = 0
+max_ticks = 600
+room_type = "Entry"
+hero_templates = [
+    "elementalist",
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "terrain_coord"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "healer_bot"
+template = "cleric"
+hp_override = 500
+dps_override = 5.0
+tag = "healer"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "berserker"
+hp_override = 600
+dps_override = 30.0
+tag = "dps"
+
+[scenario.objective]
+objective_type = "kill_all"

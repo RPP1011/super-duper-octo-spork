@@ -222,6 +222,10 @@ pub fn clamp_step_to_walkable(nav: &GridNav, from: SimVec2, to: SimVec2) -> SimV
 /// A cell counts as cover if there is a blocked cell adjacent to the defender
 /// that lies roughly between the defender and attacker.
 pub fn cover_factor(nav: &GridNav, defender_pos: SimVec2, attacker_pos: SimVec2) -> f32 {
+    // Fast path: no blocked cells means no cover anywhere.
+    if nav.fully_open {
+        return 0.0;
+    }
     let def_cell = nav.cell_of(defender_pos);
     let dx = attacker_pos.x - defender_pos.x;
     let dy = attacker_pos.y - defender_pos.y;
@@ -343,6 +347,11 @@ pub fn terrain_biased_step(
 }
 
 pub fn has_line_of_sight(nav: &GridNav, from: SimVec2, to: SimVec2) -> bool {
+    // Fast path for fully-open rooms: no interior obstacles.
+    if nav.fully_open {
+        return true;
+    }
+
     let dx = to.x - from.x;
     let dy = to.y - from.y;
     let dist = (dx * dx + dy * dy).sqrt();
@@ -372,6 +381,11 @@ pub fn has_line_of_sight(nav: &GridNav, from: SimVec2, to: SimVec2) -> bool {
 /// Returns a Vec of length `n_rays`.  Ray 0 points in the +X direction;
 /// subsequent rays are spaced counter-clockwise.
 pub fn raycast_distances(nav: &GridNav, origin: SimVec2, n_rays: usize, max_dist: f32) -> Vec<f32> {
+    // Fast path for fully-open rooms: all rays hit max distance.
+    if nav.fully_open {
+        return vec![max_dist; n_rays];
+    }
+
     let step = nav.cell_size * 0.45;
     let max_steps = (max_dist / step).ceil() as i32;
 

@@ -1,0 +1,19 @@
+[scenario]
+name = "drill_4_1_heal_ally_96032"
+seed = 96032
+hero_count = 2
+enemy_count = 0
+max_ticks = 100
+room_type = "Entry"
+hero_templates = [
+    "cleric",
+    "warrior",
+]
+enemy_hero_templates = []
+drill_type = "heal_ally"
+action_mask = "all"
+ally_hp_percent = 0.3
+
+[scenario.objective]
+objective_type = "heal_ally"
+target_hp_percent = 0.9

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_brawler_brute"
+seed = 21097
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "brawler", "brute"]
+enemy_hero_templates = ["amplifier", "brawler", "brute"]
+max_ticks = 800
+room_type = "Pressure"

@@ -44,6 +44,7 @@ pub enum OracleSubcommand {
     TransformerRl(TransformerRlArgs),
     OperatorDataset(OperatorDatasetArgs),
     AbilityProfile(AbilityProfileArgs),
+    MonitorTraces(MonitorTracesArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -297,6 +298,12 @@ pub struct TransformerRlGenerateArgs {
     /// Concurrent sims per thread for GPU pipelining (default 1 = blocking)
     #[arg(long, default_value_t = 1)]
     pub sims_per_thread: usize,
+    /// Self-play via GPU: both hero and enemy teams use the same GPU inference server
+    #[arg(long)]
+    pub self_play_gpu: bool,
+    /// Play each scenario from both sides (swap hero/enemy teams), doubling episodes
+    #[arg(long)]
+    pub swap_sides: bool,
     /// Use purely random actions (no model inference) for baseline measurement
     #[arg(long)]
     pub random_policy: bool,
@@ -349,6 +356,16 @@ pub struct AbilityProfileArgs {
     /// Number of parallel threads (0 = all cores)
     #[arg(short = 'j', long, default_value_t = 0)]
     pub threads: usize,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Run LOLA stream monitor on saved RL episode traces")]
+pub struct MonitorTracesArgs {
+    /// Path(s) to JSONL episode files or directories
+    pub path: Vec<PathBuf>,
+    /// Sample percentage (0.0-1.0, default 1.0 = all episodes)
+    #[arg(long, default_value_t = 1.0)]
+    pub sample: f32,
 }
 
 #[derive(Debug, Parser)]

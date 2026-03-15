@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_healer"
+seed = 94939
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "healer"]
+enemy_hero_templates = ["archmage", "healer"]
+max_ticks = 800
+room_type = "Pressure"

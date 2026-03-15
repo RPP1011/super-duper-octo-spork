@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_executioner"
+seed = 87128
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "executioner"]
+enemy_hero_templates = ["caster", "executioner"]
+max_ticks = 800
+room_type = "Pressure"

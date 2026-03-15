@@ -1,0 +1,25 @@
+[scenario]
+name = "drill_1_3_navigate_51041"
+seed = 51041
+hero_count = 1
+enemy_count = 0
+max_ticks = 400
+room_type = "Pivot"
+hero_templates = [
+    "scout",
+]
+enemy_hero_templates = []
+drill_type = "navigate"
+target_position = [
+    2.1,
+    17.8,
+]
+action_mask = "move_only"
+
+[scenario.objective]
+objective_type = "reach_position"
+position = [
+    2.1,
+    17.8,
+]
+radius = 1.0

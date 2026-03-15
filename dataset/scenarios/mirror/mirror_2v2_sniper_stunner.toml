@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_sniper_stunner"
+seed = 92544
+hero_count = 2
+enemy_count = 0
+hero_templates = ["sniper", "stunner"]
+enemy_hero_templates = ["sniper", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

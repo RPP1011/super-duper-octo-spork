@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_charger"
+seed = 31319
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "charger"]
+enemy_hero_templates = ["archmage", "charger"]
+max_ticks = 800
+room_type = "Pressure"

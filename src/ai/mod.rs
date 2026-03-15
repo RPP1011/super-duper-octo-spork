@@ -1,7 +1,9 @@
 pub mod advanced;
+pub mod behavior;
 pub mod control;
 pub mod core;
 pub mod effects;
+pub mod goap;
 pub mod pathing;
 pub mod personality;
 pub mod phase;

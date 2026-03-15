@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_warden"
+seed = 44522
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "warden"]
+enemy_hero_templates = ["brute", "warden"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_pyromancer"
+seed = 98259
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "pyromancer"]
+enemy_hero_templates = ["charger", "pyromancer"]
+max_ticks = 800
+room_type = "Pressure"

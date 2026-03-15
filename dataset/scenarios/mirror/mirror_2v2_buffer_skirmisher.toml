@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_buffer_skirmisher"
+seed = 57576
+hero_count = 2
+enemy_count = 0
+hero_templates = ["buffer", "skirmisher"]
+enemy_hero_templates = ["buffer", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

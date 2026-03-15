@@ -19,14 +19,26 @@
 
 pub mod ast;
 pub mod emit;
+pub mod emit_effects;
+pub mod emit_helpers;
 pub mod error;
 pub mod lower;
+pub mod lower_delivery;
+pub mod lower_effects;
+pub mod parse_delivery;
+pub mod parse_effects;
 pub mod parser;
 
 #[cfg(test)]
 mod fuzz;
 #[cfg(test)]
+mod fuzz_generators;
+#[cfg(test)]
+mod fuzz_roundtrip;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_roundtrip;
 
 use crate::ai::effects::defs::{AbilityDef, PassiveDef};
 use error::DslError;

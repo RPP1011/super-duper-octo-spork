@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_slower_striker"
+seed = 10973
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "slower", "striker"]
+enemy_hero_templates = ["brute", "slower", "striker"]
+max_ticks = 800
+room_type = "Pressure"

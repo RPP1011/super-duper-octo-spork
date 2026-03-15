@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slower_striker"
+seed = 42092
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slower", "striker"]
+enemy_hero_templates = ["slower", "striker"]
+max_ticks = 800
+room_type = "Pressure"

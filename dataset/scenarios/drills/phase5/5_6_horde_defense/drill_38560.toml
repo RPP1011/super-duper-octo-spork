@@ -1,0 +1,59 @@
+[scenario]
+name = "drill_5_6_horde_def_38560"
+seed = 38560
+hero_count = 2
+enemy_count = 0
+max_ticks = 800
+room_type = "Pivot"
+hero_templates = [
+    "knight",
+    "elementalist",
+]
+enemy_hero_templates = []
+drill_type = "horde_defense"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_0"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_1"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_2"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_3"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_4"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 200
+dps_override = 10.0
+tag = "minion_5"
+
+[scenario.objective]
+objective_type = "kill_all"

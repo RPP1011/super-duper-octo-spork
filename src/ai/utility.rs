@@ -457,14 +457,14 @@ mod tests {
     #[test]
     fn phase1_regression_snapshot() {
         let result = run_phase1_sample(11, 200, FIXED_TICK_MS);
-        assert_eq!(result.event_log_hash, 0xa774_8f6e_dee4_9806);
-        assert_eq!(result.final_state_hash, 0xbb27_3aa8_3af7_e22c);
+        assert_eq!(result.event_log_hash, 0x4153_af9a_8241_744b);
+        assert_eq!(result.final_state_hash, 0xf227_f31f_c6ad_debc);
         assert_eq!(result.metrics.winner, Some(Team::Hero));
         assert_eq!(
             result.metrics.final_hp_by_unit,
-            vec![(1, 4), (2, 71), (3, 0), (4, 0)]
+            vec![(1, 3), (2, 71), (3, 0), (4, 0)]
         );
-        assert_eq!(result.metrics.casts_started, 25);
+        assert_eq!(result.metrics.casts_started, 26);
         assert_eq!(result.metrics.casts_completed, 25);
         assert_eq!(result.metrics.invariant_violations, 0);
     }

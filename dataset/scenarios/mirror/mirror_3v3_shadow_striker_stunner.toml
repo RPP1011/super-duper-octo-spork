@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_shadow_striker_stunner"
+seed = 58099
+hero_count = 3
+enemy_count = 0
+hero_templates = ["shadow", "striker", "stunner"]
+enemy_hero_templates = ["shadow", "striker", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

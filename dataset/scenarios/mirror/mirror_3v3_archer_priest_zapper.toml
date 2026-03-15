@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archer_priest_zapper"
+seed = 62978
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archer", "priest", "zapper"]
+enemy_hero_templates = ["archer", "priest", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

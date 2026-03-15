@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_bulwark_priest"
+seed = 37760
+hero_count = 2
+enemy_count = 0
+hero_templates = ["bulwark", "priest"]
+enemy_hero_templates = ["bulwark", "priest"]
+max_ticks = 800
+room_type = "Pressure"

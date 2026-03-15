@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_duelist_striker"
+seed = 64948
+hero_count = 2
+enemy_count = 0
+hero_templates = ["duelist", "striker"]
+enemy_hero_templates = ["duelist", "striker"]
+max_ticks = 800
+room_type = "Pressure"

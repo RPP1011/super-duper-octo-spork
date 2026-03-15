@@ -1,10 +1,43 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::ai::core::{step, SimEvent, Team, FIXED_TICK_MS};
+use crate::ai::core::{distance, step, SimEvent, Team, FIXED_TICK_MS};
+use crate::ai::pathing::{cover_factor, GridNav};
 
 use super::types::*;
 use super::runner::run_scenario_to_state;
+
+/// Update terrain-derived properties (cover_bonus, elevation) for all living units.
+fn update_terrain_properties(sim: &mut crate::ai::core::SimState, nav: &GridNav) {
+    let unit_count = sim.units.len();
+    for i in 0..unit_count {
+        if sim.units[i].hp <= 0 {
+            sim.units[i].cover_bonus = 0.0;
+            sim.units[i].elevation = 0.0;
+            continue;
+        }
+        sim.units[i].elevation = nav.elevation_at_pos(sim.units[i].position);
+
+        let pos = sim.units[i].position;
+        let team = sim.units[i].team;
+        let mut nearest_enemy_pos = None;
+        let mut nearest_dist = f32::INFINITY;
+        for j in 0..unit_count {
+            if sim.units[j].hp <= 0 || sim.units[j].team == team {
+                continue;
+            }
+            let d = distance(pos, sim.units[j].position);
+            if d < nearest_dist {
+                nearest_dist = d;
+                nearest_enemy_pos = Some(sim.units[j].position);
+            }
+        }
+        sim.units[i].cover_bonus = match nearest_enemy_pos {
+            Some(ep) => cover_factor(nav, pos, ep),
+            None => 0.0,
+        };
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,6 +83,9 @@ pub fn run_scenario_with_ability_eval(cfg: &ScenarioCfg, weights_path: &Path) ->
 
 fn run_scenario_impl(cfg: &ScenarioCfg, ability_eval_path: Option<&Path>) -> ScenarioResult {
     let (mut sim, mut squad_state) = run_scenario_to_state(cfg);
+
+    #[cfg(feature = "stream-monitor")]
+    let mut monitor = crate::ai::core::monitor::SimMonitor::new(&sim, 100);
 
     if let Some(path) = ability_eval_path {
         if let Err(e) = squad_state.load_ability_eval_weights(path) {
@@ -131,6 +167,14 @@ fn run_scenario_impl(cfg: &ScenarioCfg, ability_eval_path: Option<&Path>) -> Sce
 
         let (new_sim, events) = step(sim, &all_intents, FIXED_TICK_MS);
         sim = new_sim;
+
+        #[cfg(feature = "stream-monitor")]
+        monitor.observe(&sim, &events, FIXED_TICK_MS);
+
+        // Update terrain properties if grid available
+        if let Some(ref nav) = sim.grid_nav.clone() {
+            update_terrain_properties(&mut sim, &nav);
+        }
 
         for ev in &events {
             match ev {

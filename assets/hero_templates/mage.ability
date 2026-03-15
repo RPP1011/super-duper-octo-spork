@@ -2,7 +2,7 @@
 
 ability Fireball {
     target: enemy, range: 5.0
-    cooldown: 5s, cast: 300ms
+    cooldown: 5s, cast: 500ms
     hint: damage
 
     deliver projectile { speed: 8.0, width: 0.3 } {
@@ -51,7 +51,7 @@ ability Blizzard {
 
 ability Meteor {
     target: ground, range: 6.0
-    cooldown: 18s, cast: 500ms
+    cooldown: 18s, cast: 800ms
     hint: damage
 
     damage 80 in circle(2.5) [FIRE: 70]

@@ -4,8 +4,17 @@ mod training;
 mod selfplay;
 mod transformer_play;
 mod transformer_rl;
+mod rl_episode;
+mod rl_policies;
+mod rl_eval;
+mod rl_generate;
+mod rl_gpu;
+mod rl_gpu_sim;
 mod operator_dataset;
 mod ability_profile;
+mod ability_profile_io;
+#[cfg(feature = "stream-monitor")]
+mod monitor_traces;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -28,6 +37,15 @@ pub fn run_oracle_cmd(args: OracleArgs) -> ExitCode {
         OracleSubcommand::TransformerRl(args) => transformer_rl::run_transformer_rl(args),
         OracleSubcommand::OperatorDataset(args) => operator_dataset::run_operator_dataset(args),
         OracleSubcommand::AbilityProfile(args) => ability_profile::run_ability_profile(args),
+        #[cfg(feature = "stream-monitor")]
+        OracleSubcommand::MonitorTraces(args) => {
+            monitor_traces::run_monitor_traces(&args.path, args.sample)
+        }
+        #[cfg(not(feature = "stream-monitor"))]
+        OracleSubcommand::MonitorTraces(_) => {
+            eprintln!("Error: monitor-traces requires --features stream-monitor");
+            ExitCode::FAILURE
+        }
     }
 }
 

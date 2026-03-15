@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_buffer_charger"
+seed = 23947
+hero_count = 2
+enemy_count = 0
+hero_templates = ["buffer", "charger"]
+enemy_hero_templates = ["buffer", "charger"]
+max_ticks = 800
+room_type = "Pressure"

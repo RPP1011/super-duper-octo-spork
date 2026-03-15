@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_skirmisher"
+seed = 62772
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "skirmisher"]
+enemy_hero_templates = ["charger", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

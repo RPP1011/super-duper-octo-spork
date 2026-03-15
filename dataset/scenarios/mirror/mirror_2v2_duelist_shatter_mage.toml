@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_duelist_shatter_mage"
+seed = 85880
+hero_count = 2
+enemy_count = 0
+hero_templates = ["duelist", "shatter_mage"]
+enemy_hero_templates = ["duelist", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

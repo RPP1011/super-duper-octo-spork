@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_drainer"
+seed = 57052
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "drainer"]
+enemy_hero_templates = ["archer", "drainer"]
+max_ticks = 800
+room_type = "Pressure"

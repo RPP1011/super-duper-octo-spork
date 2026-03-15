@@ -70,6 +70,9 @@ pub fn try_start_ability(
         target_pos: None,
         remaining_ms: state.units[attacker_idx].ability_cast_time_ms,
         kind: CastKind::Ability,
+        area: None,
+        ability_index: None,
+        effect_hint: CastEffectHint::Damage,
     };
     state.units[attacker_idx].casting = Some(cast);
     events.push(SimEvent::AbilityCastStarted {
@@ -121,6 +124,9 @@ pub fn try_start_heal(
         target_pos: None,
         remaining_ms: state.units[healer_idx].heal_cast_time_ms,
         kind: CastKind::Heal,
+        area: None,
+        ability_index: None,
+        effect_hint: CastEffectHint::Heal,
     };
     state.units[healer_idx].casting = Some(cast);
     events.push(SimEvent::HealCastStarted {
@@ -177,6 +183,9 @@ pub fn try_start_control(
         target_pos: None,
         remaining_ms: state.units[caster_idx].control_cast_time_ms,
         kind: CastKind::Control,
+        area: None,
+        ability_index: None,
+        effect_hint: CastEffectHint::CrowdControl,
     };
     state.units[caster_idx].casting = Some(cast);
     events.push(SimEvent::ControlCastStarted {
@@ -262,11 +271,24 @@ pub fn try_start_hero_ability(
     }
 
     if cast_time_ms > 0 {
+        // Enrich CastState with ability info for spatial awareness
+        let ability_area = state.units[caster_idx].abilities.get(ability_index)
+            .and_then(|slot| {
+                // Extract area from the ability's effects or delivery
+                slot.def.effects.first().and_then(|ce| ce.area)
+            });
+        let effect_hint = state.units[caster_idx].abilities.get(ability_index)
+            .map(|slot| CastEffectHint::from_ability_def(&slot.def))
+            .unwrap_or(CastEffectHint::Unknown);
+
         let cast = CastState {
             target_id,
             target_pos,
             remaining_ms: cast_time_ms,
             kind: CastKind::HeroAbility(ability_index),
+            area: ability_area,
+            ability_index: Some(ability_index),
+            effect_hint,
         };
         state.units[caster_idx].casting = Some(cast);
     } else {

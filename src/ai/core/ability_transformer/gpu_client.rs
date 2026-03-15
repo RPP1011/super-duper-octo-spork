@@ -10,7 +10,8 @@
 //!   [0x08] cls_dim: u32
 //!   [0x0C] max_batch_size: u32
 //!   [0x10] sample_size: u32
-//!   [0x14] response_sample_size: u32 = 16
+//!   [0x14] response_sample_size: u32
+//!   [0x18] h_dim: u32 (GRU hidden dimension, 0 = no GRU)
 //!   [0x40] flag: u32 (0=idle, 1=request_ready, 2=response_ready)
 //!   [0x44] batch_size: u32
 //!   [0x80] reload_path: 256 bytes (null-terminated)
@@ -18,7 +19,7 @@
 //!   [0x184] reload_ack: u32
 //!
 //!   [512..] request_data: max_batch × sample_size
-//!   [512 + req_region..] response_data: max_batch × 16
+//!   [512 + req_region..] response_data: max_batch × response_sample_size
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -27,21 +28,22 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crossbeam_channel::{bounded, Sender, Receiver};
 
 const MAX_ENTITIES: usize = 20;
-const MAX_THREATS: usize = 4;
-const MAX_POSITIONS: usize = 4;
-const ENTITY_DIM: usize = 30;
-const THREAT_DIM: usize = 8;
+const MAX_THREATS: usize = 6;
+const MAX_POSITIONS: usize = 8;
+const ENTITY_DIM: usize = 34;
+const THREAT_DIM: usize = 10;
 const POSITION_DIM: usize = 8;
 const MAX_ABILITIES: usize = 8;
 const NUM_COMBAT_TYPES: usize = 10;
-
-const RESPONSE_SAMPLE_SIZE: usize = 16;
 
 const SHM_MAGIC: u32 = 0x47505549;
 const OFF_MAGIC: usize = 0;
 const OFF_CLS_DIM: usize = 8;
 const OFF_MAX_BATCH: usize = 12;
 const OFF_SAMPLE_SIZE: usize = 16;
+const OFF_RESPONSE_SAMPLE_SIZE: usize = 0x14;
+const OFF_H_DIM: usize = 0x18;
+const OFF_AGG_DIM: usize = 0x1C;
 const OFF_FLAG: usize = 0x40;
 const OFF_BATCH_SIZE: usize = 0x44;
 const HEADER_SIZE: usize = 512;
@@ -54,6 +56,8 @@ pub struct InferenceRequest {
     pub positions: Vec<Vec<f32>>,
     pub combat_mask: Vec<bool>,
     pub ability_cls: Vec<Option<Vec<f32>>>,
+    pub hidden_state: Vec<f32>,
+    pub aggregate_features: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +68,7 @@ pub struct InferenceResult {
     pub lp_move: f32,
     pub lp_combat: f32,
     pub lp_pointer: f32,
+    pub hidden_state_out: Vec<f32>,
 }
 
 struct BatchItem {
@@ -87,6 +92,10 @@ pub struct GpuInferenceClient {
     /// Threads call `wait_for_batch()` to park until this changes.
     batch_epoch: Arc<AtomicU64>,
     batch_notify: Arc<BatchNotify>,
+    /// GRU hidden state dimension (0 = no GRU).
+    h_dim: usize,
+    /// Aggregate feature dimension (0 = no aggregate features).
+    agg_dim: usize,
 }
 
 /// Condvar-based notification for batch completion.
@@ -146,9 +155,12 @@ impl GpuInferenceClient {
         let cls_dim = u32::from_le_bytes(mmap[OFF_CLS_DIM..OFF_CLS_DIM+4].try_into().unwrap()) as usize;
         let server_max_batch = u32::from_le_bytes(mmap[OFF_MAX_BATCH..OFF_MAX_BATCH+4].try_into().unwrap()) as usize;
         let sample_size = u32::from_le_bytes(mmap[OFF_SAMPLE_SIZE..OFF_SAMPLE_SIZE+4].try_into().unwrap()) as usize;
+        let response_sample_size = u32::from_le_bytes(mmap[OFF_RESPONSE_SAMPLE_SIZE..OFF_RESPONSE_SAMPLE_SIZE+4].try_into().unwrap()) as usize;
+        let h_dim = u32::from_le_bytes(mmap[OFF_H_DIM..OFF_H_DIM+4].try_into().unwrap()) as usize;
+        let agg_dim = u32::from_le_bytes(mmap[OFF_AGG_DIM..OFF_AGG_DIM+4].try_into().unwrap()) as usize;
         let effective_max_batch = max_batch_size.min(server_max_batch);
 
-        eprintln!("GPU SHM connected: cls_dim={cls_dim}, max_batch={effective_max_batch}, sample_size={sample_size}");
+        eprintln!("GPU SHM connected: cls_dim={cls_dim}, max_batch={effective_max_batch}, sample_size={sample_size}, response_sample_size={response_sample_size}, h_dim={h_dim}, agg_dim={agg_dim}");
 
         let (request_tx, request_rx) = bounded::<BatchItem>(effective_max_batch * 32);
         let batch_epoch = Arc::new(AtomicU64::new(0));
@@ -158,7 +170,10 @@ impl GpuInferenceClient {
             mmap,
             request_rx,
             cls_dim,
+            h_dim,
+            agg_dim,
             sample_size,
+            response_sample_size,
             max_batch_size: effective_max_batch,
             batch_timeout_ms,
             batch_epoch: batch_epoch.clone(),
@@ -171,6 +186,8 @@ impl GpuInferenceClient {
             next_token: AtomicU64::new(0),
             batch_epoch,
             batch_notify,
+            h_dim,
+            agg_dim,
         }))
     }
 
@@ -229,13 +246,26 @@ impl GpuInferenceClient {
         }
         self.batch_notify.wait_timeout(std::time::Duration::from_millis(10));
     }
+
+    /// GRU hidden state dimension (0 = no GRU).
+    pub fn h_dim(&self) -> usize {
+        self.h_dim
+    }
+
+    /// Aggregate feature dimension (0 = no aggregate features).
+    pub fn agg_dim(&self) -> usize {
+        self.agg_dim
+    }
 }
 
 struct BatcherThread {
     mmap: memmap2::MmapMut,
     request_rx: Receiver<BatchItem>,
     cls_dim: usize,
+    h_dim: usize,
+    agg_dim: usize,
     sample_size: usize,
+    response_sample_size: usize,
     max_batch_size: usize,
     batch_timeout_ms: u64,
     batch_epoch: Arc<AtomicU64>,
@@ -247,6 +277,7 @@ impl BatcherThread {
         let dummy = InferenceResult {
             move_dir: 8, combat_type: 1, target_idx: 0,
             lp_move: -2.2, lp_combat: -0.7, lp_pointer: 0.0,
+            hidden_state_out: vec![0.0; self.h_dim],
         };
 
         loop {
@@ -274,7 +305,7 @@ impl BatcherThread {
             let req_offset = HEADER_SIZE;
             let mut offset = req_offset;
             for item in &batch {
-                let data = serialize_sample(&item.request, self.cls_dim);
+                let data = serialize_sample(&item.request, self.cls_dim, self.h_dim, self.agg_dim);
                 self.mmap[offset..offset + data.len()].copy_from_slice(&data);
                 offset += self.sample_size; // stride by sample_size for alignment
             }
@@ -309,8 +340,16 @@ impl BatcherThread {
             // Read responses
             let resp_base = HEADER_SIZE + self.max_batch_size * self.sample_size;
             for (i, item) in batch.iter().enumerate() {
-                let off = resp_base + i * RESPONSE_SAMPLE_SIZE;
-                let resp = &self.mmap[off..off + RESPONSE_SAMPLE_SIZE];
+                let off = resp_base + i * self.response_sample_size;
+                let resp = &self.mmap[off..off + self.response_sample_size];
+                let hidden_state_out = if self.h_dim > 0 {
+                    let h_off = 16; // hidden state starts after the 16-byte fixed fields
+                    (0..self.h_dim)
+                        .map(|j| f32::from_le_bytes(resp[h_off + j*4..h_off + j*4 + 4].try_into().unwrap()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let _ = item.response_tx.send(InferenceResult {
                     move_dir: resp[0],
                     combat_type: resp[1],
@@ -318,6 +357,7 @@ impl BatcherThread {
                     lp_move: f32::from_le_bytes(resp[4..8].try_into().unwrap()),
                     lp_combat: f32::from_le_bytes(resp[8..12].try_into().unwrap()),
                     lp_pointer: f32::from_le_bytes(resp[12..16].try_into().unwrap()),
+                    hidden_state_out,
                 });
             }
 
@@ -344,7 +384,7 @@ impl BatcherThread {
     }
 }
 
-fn serialize_sample(req: &InferenceRequest, cls_dim: usize) -> Vec<u8> {
+fn serialize_sample(req: &InferenceRequest, cls_dim: usize, h_dim: usize, agg_dim: usize) -> Vec<u8> {
     let ent_mask_padded = (MAX_ENTITIES + 3) & !3;
     let thr_mask_padded = (MAX_THREATS + 3) & !3;
     let pos_mask_padded = (MAX_POSITIONS + 3) & !3;
@@ -437,6 +477,22 @@ fn serialize_sample(req: &InferenceRequest, cls_dim: usize) -> Vec<u8> {
             }
         } else {
             data.extend_from_slice(&vec![0u8; cls_dim * 4]);
+        }
+    }
+
+    // Append GRU hidden state (h_dim floats, or nothing if h_dim=0)
+    if h_dim > 0 {
+        for j in 0..h_dim {
+            let v = if j < req.hidden_state.len() { req.hidden_state[j] } else { 0.0 };
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    // Append aggregate features (agg_dim floats, or nothing if agg_dim=0)
+    if agg_dim > 0 {
+        for j in 0..agg_dim {
+            let v = if j < req.aggregate_features.len() { req.aggregate_features[j] } else { 0.0 };
+            data.extend_from_slice(&v.to_le_bytes());
         }
     }
 

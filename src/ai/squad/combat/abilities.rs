@@ -8,7 +8,7 @@ use crate::ai::squad::state::{personality_movement_profile, FormationMode, TickC
 
 use super::sorted_tags;
 
-pub(in crate::ai::squad) fn evaluate_hero_ability(
+pub(crate) fn evaluate_hero_ability(
     state: &SimState,
     unit_id: u32,
     target_id: u32,

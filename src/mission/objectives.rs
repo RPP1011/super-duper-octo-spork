@@ -158,6 +158,9 @@ pub fn generate_objective(
                 }
             }
         }
+
+        // Open: always Eliminate (training arena)
+        game_core::RoomType::Open => ObjectiveKind::Eliminate,
     };
 
     let description = describe_kind(&kind);

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_bulwark"
+seed = 23396
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "bulwark"]
+enemy_hero_templates = ["archer", "bulwark"]
+max_ticks = 800
+room_type = "Pressure"

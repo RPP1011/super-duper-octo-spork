@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_3_5_healer_67300"
+seed = 67300
+hero_count = 1
+enemy_count = 0
+max_ticks = 600
+room_type = "Entry"
+hero_templates = [
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "kill_healer"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "brute"
+hp_override = 800
+dps_override = 20.0
+tag = "dps"
+
+[[scenario.enemy_units]]
+behavior = "healer_bot"
+template = "cleric"
+hp_override = 500
+dps_override = 5.0
+tag = "healer"
+
+[scenario.objective]
+objective_type = "kill_target"
+target_tag = "healer"

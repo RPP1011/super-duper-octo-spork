@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_plague_doctor"
+seed = 63883
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "plague_doctor"]
+enemy_hero_templates = ["charger", "plague_doctor"]
+max_ticks = 800
+room_type = "Pressure"

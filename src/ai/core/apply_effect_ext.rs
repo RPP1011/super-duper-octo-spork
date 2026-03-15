@@ -58,6 +58,7 @@ pub fn apply_effect_extended(
                     let pct = (state.units[tidx].hp as f32 / state.units[tidx].max_hp.max(1) as f32) * 100.0;
                     if pct <= *hp_threshold_percent {
                         state.units[tidx].hp = 0;
+                        clear_dead_unit_state(&mut state.units[tidx]);
                         events.push(SimEvent::ExecuteTriggered { tick, source_id: caster_id, target_id });
                         events.push(SimEvent::UnitDied { tick, unit_id: target_id });
                         fire_damage_triggers(caster_idx, tidx, target_id, 0, false, tick, state, events);

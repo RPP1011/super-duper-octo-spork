@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_deathknight_sniper"
+seed = 38016
+hero_count = 2
+enemy_count = 0
+hero_templates = ["deathknight", "sniper"]
+enemy_hero_templates = ["deathknight", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

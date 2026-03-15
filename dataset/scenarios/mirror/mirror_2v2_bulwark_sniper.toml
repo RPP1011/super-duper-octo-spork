@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_bulwark_sniper"
+seed = 69177
+hero_count = 2
+enemy_count = 0
+hero_templates = ["bulwark", "sniper"]
+enemy_hero_templates = ["bulwark", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

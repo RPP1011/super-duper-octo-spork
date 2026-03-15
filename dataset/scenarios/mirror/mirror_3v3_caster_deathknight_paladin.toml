@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_caster_deathknight_paladin"
+seed = 91830
+hero_count = 3
+enemy_count = 0
+hero_templates = ["caster", "deathknight", "paladin"]
+enemy_hero_templates = ["caster", "deathknight", "paladin"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_buffer_scout_slower"
+seed = 87353
+hero_count = 3
+enemy_count = 0
+hero_templates = ["buffer", "scout", "slower"]
+enemy_hero_templates = ["buffer", "scout", "slower"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_bulwark_drainer"
+seed = 26828
+hero_count = 2
+enemy_count = 0
+hero_templates = ["bulwark", "drainer"]
+enemy_hero_templates = ["bulwark", "drainer"]
+max_ticks = 800
+room_type = "Pressure"

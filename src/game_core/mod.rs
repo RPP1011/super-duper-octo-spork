@@ -19,6 +19,7 @@ mod attention_systems;
 mod save;
 mod migrate;
 pub mod verify;
+mod verify_details;
 
 #[cfg(test)]
 mod tests;

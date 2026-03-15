@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_warden_zapper"
+seed = 33053
+hero_count = 2
+enemy_count = 0
+hero_templates = ["warden", "zapper"]
+enemy_hero_templates = ["warden", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

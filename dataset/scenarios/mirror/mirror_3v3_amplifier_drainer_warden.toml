@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_drainer_warden"
+seed = 48616
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "drainer", "warden"]
+enemy_hero_templates = ["amplifier", "drainer", "warden"]
+max_ticks = 800
+room_type = "Pressure"

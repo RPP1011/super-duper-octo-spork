@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_deathknight_priest"
+seed = 16630
+hero_count = 2
+enemy_count = 0
+hero_templates = ["deathknight", "priest"]
+enemy_hero_templates = ["deathknight", "priest"]
+max_ticks = 800
+room_type = "Pressure"

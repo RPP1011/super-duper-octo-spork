@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_stunner"
+seed = 47930
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "stunner"]
+enemy_hero_templates = ["archer", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

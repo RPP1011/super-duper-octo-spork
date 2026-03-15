@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_fighter_shadow_slower"
+seed = 10024
+hero_count = 3
+enemy_count = 0
+hero_templates = ["fighter", "shadow", "slower"]
+enemy_hero_templates = ["fighter", "shadow", "slower"]
+max_ticks = 800
+room_type = "Pressure"

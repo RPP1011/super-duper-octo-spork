@@ -1,0 +1,30 @@
+[scenario]
+name = "drill_4_3b_selective_17997"
+seed = 17997
+hero_count = 1
+enemy_count = 0
+max_ticks = 300
+room_type = "Entry"
+hero_templates = [
+    "stunner",
+]
+enemy_hero_templates = []
+drill_type = "selective_interrupt"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "aoe_caster"
+template = "elementalist"
+hp_override = 400
+dps_override = 10.0
+tag = "weak_caster"
+
+[[scenario.enemy_units]]
+behavior = "aoe_caster"
+template = "mage"
+hp_override = 500
+dps_override = 60.0
+tag = "strong_caster"
+
+[scenario.objective]
+objective_type = "survive"

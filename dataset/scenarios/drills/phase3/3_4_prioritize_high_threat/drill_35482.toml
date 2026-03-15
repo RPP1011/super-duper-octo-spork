@@ -1,0 +1,32 @@
+[scenario]
+name = "drill_3_4_prio_threat_35482"
+seed = 35482
+hero_count = 2
+enemy_count = 0
+max_ticks = 400
+room_type = "Entry"
+hero_templates = [
+    "archer",
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "prioritize_target"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 600
+dps_override = 5.0
+tag = "low_threat"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "berserker"
+hp_override = 600
+dps_override = 40.0
+tag = "high_threat"
+
+[scenario.objective]
+objective_type = "kill_target"
+target_tag = "high_threat"

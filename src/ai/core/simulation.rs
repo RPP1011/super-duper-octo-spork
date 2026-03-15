@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use serde::{Deserialize, Serialize};
-
+use contracts::*;
 use crate::ai::effects::StatusKind;
 
 use super::types::*;
@@ -13,9 +12,12 @@ use super::resolve::resolve_cast;
 use super::intent::*;
 use super::tick_systems::*;
 use super::tick_world::*;
-use super::metrics::compute_metrics;
 use super::verify::verify_tick;
 
+#[requires(state.units.iter().all(|u| u.position.x.is_finite() && u.position.y.is_finite()))]
+#[requires(state.units.iter().all(|u| u.hp <= u.max_hp))]
+#[ensures(ret.0.tick == old(state.tick) + 1)]
+#[ensures(ret.0.units.len() >= old(state.units.len()))]
 pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimState, Vec<SimEvent>) {
     state.tick += 1;
     let tick = state.tick;
@@ -113,6 +115,10 @@ pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimStat
             let next = move_away(start, fear_source, max_delta);
             if distance(start, next) > f32::EPSILON {
                 state.units[idx].position = next;
+                // Refresh elevation after fear-forced movement
+                if let Some(ref nav) = state.grid_nav {
+                    state.units[idx].elevation = nav.elevation_at_pos(next);
+                }
                 events.push(SimEvent::Moved {
                     tick, unit_id: state.units[idx].id,
                     from_x100: to_x100(start.x), from_y100: to_x100(start.y),
@@ -228,7 +234,7 @@ pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimStat
     #[cfg(debug_assertions)]
     {
         let report = verify_tick(&state);
-        debug_assert!(
+        assert!(
             report.is_ok(),
             "Runtime verification failed at tick {}: {:?}",
             state.tick,
@@ -237,52 +243,6 @@ pub fn step(mut state: SimState, intents: &[UnitIntent], dt_ms: u32) -> (SimStat
     }
 
     (state, events)
-}
-
-pub fn run_replay(
-    initial_state: SimState,
-    scripted_intents: &[Vec<UnitIntent>],
-    ticks: u32,
-    dt_ms: u32,
-) -> ReplayResult {
-    let mut state = initial_state.clone();
-    let mut all_events = Vec::new();
-    let mut per_tick_state_hashes = Vec::with_capacity(ticks as usize);
-
-    for tick in 0..ticks {
-        let intents = scripted_intents
-            .get(tick as usize)
-            .map_or(&[][..], |v| v.as_slice());
-        let (new_state, events) = step(state, intents, dt_ms);
-        state = new_state;
-        all_events.extend(events);
-        per_tick_state_hashes.push(hash_sim_state(&state));
-    }
-
-    let event_log_hash = hash_event_log(&all_events);
-    let final_state_hash = hash_sim_state(&state);
-    let metrics = compute_metrics(
-        &initial_state, &state, scripted_intents, &all_events, ticks, dt_ms,
-    );
-
-    ReplayResult {
-        final_state: state,
-        events: all_events,
-        event_log_hash,
-        final_state_hash,
-        per_tick_state_hashes,
-        metrics,
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayResult {
-    pub final_state: SimState,
-    pub events: Vec<SimEvent>,
-    pub event_log_hash: u64,
-    pub final_state_hash: u64,
-    pub per_tick_state_hashes: Vec<u64>,
-    pub metrics: SimMetrics,
 }
 
 pub fn sample_duel_state(seed: u64) -> SimState {
@@ -396,139 +356,4 @@ pub fn sample_duel_script(ticks: u32) -> Vec<Vec<UnitIntent>> {
         ]);
     }
     script
-}
-
-// ---------------------------------------------------------------------------
-// Determinism verification
-// ---------------------------------------------------------------------------
-
-/// Result of a determinism check — compares two replays of the same input.
-#[derive(Debug, Clone)]
-pub struct DeterminismReport {
-    /// True if both runs produced identical results.
-    pub is_deterministic: bool,
-    /// If divergence occurred, the first tick index where hashes differ.
-    pub first_divergent_tick: Option<usize>,
-    /// Hash from run A at the divergent tick (if any).
-    pub hash_a: Option<u64>,
-    /// Hash from run B at the divergent tick (if any).
-    pub hash_b: Option<u64>,
-}
-
-/// Run the same replay twice and compare per-tick state hashes.
-/// Returns a report indicating whether the simulation is fully deterministic
-/// for the given initial state and intent script.
-pub fn verify_determinism(
-    initial_state: &SimState,
-    scripted_intents: &[Vec<UnitIntent>],
-    ticks: u32,
-    dt_ms: u32,
-) -> DeterminismReport {
-    let result_a = run_replay(initial_state.clone(), scripted_intents, ticks, dt_ms);
-    let result_b = run_replay(initial_state.clone(), scripted_intents, ticks, dt_ms);
-
-    // Compare per-tick hashes
-    for (i, (ha, hb)) in result_a
-        .per_tick_state_hashes
-        .iter()
-        .zip(result_b.per_tick_state_hashes.iter())
-        .enumerate()
-    {
-        if ha != hb {
-            return DeterminismReport {
-                is_deterministic: false,
-                first_divergent_tick: Some(i),
-                hash_a: Some(*ha),
-                hash_b: Some(*hb),
-            };
-        }
-    }
-
-    // Also check final aggregates
-    if result_a.event_log_hash != result_b.event_log_hash
-        || result_a.final_state_hash != result_b.final_state_hash
-    {
-        return DeterminismReport {
-            is_deterministic: false,
-            first_divergent_tick: None,
-            hash_a: Some(result_a.final_state_hash),
-            hash_b: Some(result_b.final_state_hash),
-        };
-    }
-
-    DeterminismReport {
-        is_deterministic: true,
-        first_divergent_tick: None,
-        hash_a: None,
-        hash_b: None,
-    }
-}
-
-/// Run a replay against a known set of expected per-tick hashes.
-/// Returns the first tick where the actual hash diverges from the expected.
-pub fn verify_replay_against_hashes(
-    initial_state: &SimState,
-    scripted_intents: &[Vec<UnitIntent>],
-    expected_hashes: &[u64],
-    dt_ms: u32,
-) -> Option<(usize, u64, u64)> {
-    let mut state = initial_state.clone();
-    for (tick, expected) in expected_hashes.iter().enumerate() {
-        let intents = scripted_intents
-            .get(tick)
-            .map_or(&[][..], |v| v.as_slice());
-        let (new_state, _) = step(state, intents, dt_ms);
-        state = new_state;
-        let actual = hash_sim_state(&state);
-        if actual != *expected {
-            return Some((tick, *expected, actual));
-        }
-    }
-    None
-}
-
-pub fn hash_event_log(events: &[SimEvent]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0001_0000_01b3;
-    let mut hash = FNV_OFFSET;
-    for event in events {
-        let line = format!("{event:?}");
-        for byte in line.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-    }
-    hash
-}
-
-pub fn hash_sim_state(state: &SimState) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0001_0000_01b3;
-    let mut hash = FNV_OFFSET;
-    let mut entries = state.units.iter()
-        .map(|u| {
-            format!(
-                "id={} team={:?} hp={} max_hp={} pos=({}, {}) cd={} acd={} hcd={} ccd={} ctrl={} cast={:?}",
-                u.id, u.team, u.hp, u.max_hp,
-                to_x100(u.position.x), to_x100(u.position.y),
-                u.cooldown_remaining_ms, u.ability_cooldown_remaining_ms,
-                u.heal_cooldown_remaining_ms, u.control_cooldown_remaining_ms,
-                u.control_remaining_ms, u.casting
-            )
-        })
-        .collect::<Vec<_>>();
-    entries.sort();
-
-    let header = format!("tick={} rng={}", state.tick, state.rng_state);
-    for byte in header.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    for line in entries {
-        for byte in line.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-    }
-    hash
 }

@@ -58,11 +58,11 @@ fn sample_duel_regression_snapshot() {
     let ticks = 120;
     let script = sample_duel_script(ticks);
     let result = run_replay(sample_duel_state(7), &script, ticks, FIXED_TICK_MS);
-    assert_eq!(result.event_log_hash, 0xcaa9_9255_8277_ba4d);
-    assert_eq!(result.final_state_hash, 0xf7f0_48a8_2dd7_b88e);
+    assert_eq!(result.event_log_hash, 0xe5bd_a2ce_e829_dc8c);
+    assert_eq!(result.final_state_hash, 0x6117_f2a2_ae94_ab25);
     assert_eq!(result.metrics.winner, Some(Team::Hero));
-    assert_eq!(result.metrics.tick_to_first_death, Some(73));
-    assert_eq!(result.metrics.final_hp_by_unit, vec![(1, 37), (2, 0)]);
+    assert_eq!(result.metrics.tick_to_first_death, Some(83));
+    assert_eq!(result.metrics.final_hp_by_unit, vec![(1, 25), (2, 0)]);
     assert_eq!(result.metrics.invariant_violations, 0);
 }
 
@@ -108,7 +108,7 @@ fn fuzz_invariants_hold_across_seed_sweep() {
 fn control_cast_locks_target_actions_temporarily() {
     let mut u1 = hero_unit(1, Team::Hero, (0.0, 0.0));
     u1.control_range = 2.0; u1.control_duration_ms = 350; u1.control_cooldown_ms = 1_000;
-    u1.control_cast_time_ms = 0; u1.move_speed_per_sec = 0.0;
+    u1.control_cast_time_ms = 100; u1.move_speed_per_sec = 0.0;
     let mut u2 = hero_unit(2, Team::Enemy, (1.0, 0.0));
     u2.attack_range = 2.0; u2.move_speed_per_sec = 0.0;
     let mut state = make_state(vec![u1, u2], 11);
@@ -119,10 +119,14 @@ fn control_cast_locks_target_actions_temporarily() {
     ];
     let (state, events_t1) = step(state, &intents_t1, FIXED_TICK_MS);
     assert!(events_t1.iter().any(|e| matches!(e, SimEvent::ControlCastStarted { .. })));
+    // Tick 2: cast resolves (100ms cast time = 1 tick), ControlApplied emitted
     let intents_t2 = vec![UnitIntent { unit_id: 2, action: IntentAction::Attack { target_id: 1 } }];
-    let (_, events_t2) = step(state, &intents_t2, FIXED_TICK_MS);
+    let (state, events_t2) = step(state, &intents_t2, FIXED_TICK_MS);
     assert!(events_t2.iter().any(|e| matches!(e, SimEvent::ControlApplied { target_id: 2, .. })));
-    assert!(events_t2.iter().any(|e| matches!(e, SimEvent::UnitControlled { unit_id: 2, .. })));
+    // Tick 3: unit 2 starts with control_remaining_ms > 0, UnitControlled emitted
+    let intents_t3 = vec![UnitIntent { unit_id: 2, action: IntentAction::Attack { target_id: 1 } }];
+    let (_, events_t3) = step(state, &intents_t3, FIXED_TICK_MS);
+    assert!(events_t3.iter().any(|e| matches!(e, SimEvent::UnitControlled { unit_id: 2, .. })));
 }
 
 #[test]

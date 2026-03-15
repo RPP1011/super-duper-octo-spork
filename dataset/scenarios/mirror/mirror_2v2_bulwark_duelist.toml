@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_bulwark_duelist"
+seed = 96474
+hero_count = 2
+enemy_count = 0
+hero_templates = ["bulwark", "duelist"]
+enemy_hero_templates = ["bulwark", "duelist"]
+max_ticks = 800
+room_type = "Pressure"

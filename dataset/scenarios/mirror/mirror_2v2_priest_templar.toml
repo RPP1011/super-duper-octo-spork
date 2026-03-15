@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_priest_templar"
+seed = 33405
+hero_count = 2
+enemy_count = 0
+hero_templates = ["priest", "templar"]
+enemy_hero_templates = ["priest", "templar"]
+max_ticks = 800
+room_type = "Pressure"

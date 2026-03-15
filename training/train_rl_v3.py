@@ -155,6 +155,10 @@ def collate_v3_states(steps: list[dict], indices) -> dict[str, torch.Tensor]:
             pos_feat[i, :n_p] = torch.tensor(positions, dtype=torch.float)
             pos_mask[i, :n_p] = False
 
+    assert not torch.isnan(ent_feat).any(), "NaN in entity features"
+    assert not torch.isnan(thr_feat).any(), "NaN in threat features"
+    assert not torch.isnan(pos_feat).any(), "NaN in position features"
+
     return {
         "entity_features": ent_feat,
         "entity_type_ids": ent_types,
@@ -539,6 +543,10 @@ def ppo_update(
         [s["log_prob"] for s in steps], dtype=torch.float, device=DEVICE)
     adv_tensor = torch.tensor(advantages, dtype=torch.float, device=DEVICE)
     ret_tensor = torch.tensor(returns, dtype=torch.float, device=DEVICE)
+
+    assert not torch.isnan(old_log_probs).any(), "NaN in old_log_probs"
+    assert not torch.isnan(adv_tensor).any(), "NaN in advantages"
+    assert not torch.isnan(ret_tensor).any(), "NaN in returns"
 
     adv_tensor = (adv_tensor - adv_tensor.mean()) / (adv_tensor.std() + 1e-8)
 

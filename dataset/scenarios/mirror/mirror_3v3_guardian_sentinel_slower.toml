@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_guardian_sentinel_slower"
+seed = 34352
+hero_count = 3
+enemy_count = 0
+hero_templates = ["guardian", "sentinel", "slower"]
+enemy_hero_templates = ["guardian", "sentinel", "slower"]
+max_ticks = 800
+room_type = "Pressure"

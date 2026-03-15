@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_healer_skirmisher"
+seed = 24253
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "healer", "skirmisher"]
+enemy_hero_templates = ["brute", "healer", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archmage_healer_slinger"
+seed = 79632
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archmage", "healer", "slinger"]
+enemy_hero_templates = ["archmage", "healer", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

@@ -3,7 +3,7 @@ use crate::ai::effects::{AbilityTarget, StatusKind, Trigger};
 use super::types::*;
 use super::events::SimEvent;
 use super::math::distance;
-use super::helpers::{find_unit_idx, find_lowest_hp_ally_in_range};
+use super::helpers::{clear_dead_unit_state, find_unit_idx, find_lowest_hp_ally_in_range};
 use super::conditions::evaluate_condition_tracked;
 use super::apply_effect::apply_effect;
 use super::targeting::resolve_targets;
@@ -154,6 +154,7 @@ pub fn tick_status_effects(state: &mut SimState, tick: u64, dt_ms: u32, events: 
                         target_hp_before: hp_before, target_hp_after: hp_after,
                     });
                     if hp_after == 0 {
+                        clear_dead_unit_state(&mut state.units[idx]);
                         events.push(SimEvent::UnitDied { tick, unit_id });
                         deferred_triggers.push((Trigger::OnDeath, idx, source_id));
                         if let Some(src_idx) = state.units.iter().position(|u| u.id == source_id) {
@@ -240,6 +241,7 @@ pub fn tick_status_effects(state: &mut SimState, tick: u64, dt_ms: u32, events: 
                                 tick, unit_id, damage: burst,
                             });
                             if state.units[idx].hp == 0 {
+                                clear_dead_unit_state(&mut state.units[idx]);
                                 events.push(SimEvent::UnitDied { tick, unit_id });
                             }
                         }

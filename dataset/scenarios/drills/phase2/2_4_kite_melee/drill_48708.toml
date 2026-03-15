@@ -1,0 +1,23 @@
+[scenario]
+name = "drill_2_4_kite_48708"
+seed = 48708
+hero_count = 1
+enemy_count = 0
+max_ticks = 600
+room_type = "Entry"
+hero_templates = [
+    "archer",
+]
+enemy_hero_templates = []
+drill_type = "kite"
+action_mask = "move_only"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "brute"
+hp_override = 500
+dps_override = 30.0
+range_override = 1.5
+
+[scenario.objective]
+objective_type = "kill_all"

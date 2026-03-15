@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_slower"
+seed = 16006
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "slower"]
+enemy_hero_templates = ["archer", "slower"]
+max_ticks = 800
+room_type = "Pressure"

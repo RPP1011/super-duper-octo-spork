@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_scout_templar"
+seed = 32686
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "scout", "templar"]
+enemy_hero_templates = ["bulwark", "scout", "templar"]
+max_ticks = 800
+room_type = "Pressure"

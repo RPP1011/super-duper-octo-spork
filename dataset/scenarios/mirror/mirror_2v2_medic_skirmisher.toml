@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_medic_skirmisher"
+seed = 57795
+hero_count = 2
+enemy_count = 0
+hero_templates = ["medic", "skirmisher"]
+enemy_hero_templates = ["medic", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

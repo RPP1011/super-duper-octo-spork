@@ -1,0 +1,19 @@
+[scenario]
+name = "drill_4_8_enemy_cd_38968"
+seed = 38968
+hero_count = 1
+enemy_count = 0
+max_ticks = 800
+room_type = "Entry"
+hero_templates = [
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "respect_cooldowns"
+action_mask = "all"
+enemy_units = [
+    { behavior = "cc_gatekeeper", template = "stunner", hp_override = 700, dps_override = 15.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

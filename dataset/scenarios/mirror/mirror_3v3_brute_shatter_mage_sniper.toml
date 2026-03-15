@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_shatter_mage_sniper"
+seed = 26455
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "shatter_mage", "sniper"]
+enemy_hero_templates = ["brute", "shatter_mage", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

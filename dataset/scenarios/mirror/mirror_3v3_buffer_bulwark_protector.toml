@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_buffer_bulwark_protector"
+seed = 72242
+hero_count = 3
+enemy_count = 0
+hero_templates = ["buffer", "bulwark", "protector"]
+enemy_hero_templates = ["buffer", "bulwark", "protector"]
+max_ticks = 800
+room_type = "Pressure"

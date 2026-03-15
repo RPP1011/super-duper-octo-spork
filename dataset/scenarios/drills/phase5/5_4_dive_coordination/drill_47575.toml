@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_5_4_dive_47575"
+seed = 47575
+hero_count = 2
+enemy_count = 0
+max_ticks = 600
+room_type = "Entry"
+hero_templates = [
+    "duelist",
+    "assassin",
+]
+enemy_hero_templates = []
+drill_type = "dive"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "healer_bot"
+template = "cleric"
+hp_override = 500
+dps_override = 5.0
+tag = "healer"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "berserker"
+hp_override = 700
+dps_override = 25.0
+tag = "dps"
+
+[scenario.objective]
+objective_type = "kill_all"

@@ -52,6 +52,7 @@ pub enum RoomType {
     Setpiece,
     Recovery,
     Climax,
+    Open,
 }
 
 impl RoomType {
@@ -63,6 +64,7 @@ impl RoomType {
             "Setpiece" => Some(RoomType::Setpiece),
             "Recovery" => Some(RoomType::Recovery),
             "Climax" => Some(RoomType::Climax),
+            "Open" => Some(RoomType::Open),
             _ => None,
         }
     }

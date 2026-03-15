@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slower_zapper"
+seed = 69692
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slower", "zapper"]
+enemy_hero_templates = ["slower", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

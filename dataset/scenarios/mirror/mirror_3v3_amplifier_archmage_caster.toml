@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_archmage_caster"
+seed = 28208
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "archmage", "caster"]
+enemy_hero_templates = ["amplifier", "archmage", "caster"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slinger_slower"
+seed = 40784
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slinger", "slower"]
+enemy_hero_templates = ["slinger", "slower"]
+max_ticks = 800
+room_type = "Pressure"

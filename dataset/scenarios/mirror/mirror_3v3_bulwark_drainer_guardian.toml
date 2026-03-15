@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_drainer_guardian"
+seed = 60425
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "drainer", "guardian"]
+enemy_hero_templates = ["bulwark", "drainer", "guardian"]
+max_ticks = 800
+room_type = "Pressure"

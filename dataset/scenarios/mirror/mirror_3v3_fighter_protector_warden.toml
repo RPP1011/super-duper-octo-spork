@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_fighter_protector_warden"
+seed = 39588
+hero_count = 3
+enemy_count = 0
+hero_templates = ["fighter", "protector", "warden"]
+enemy_hero_templates = ["fighter", "protector", "warden"]
+max_ticks = 800
+room_type = "Pressure"

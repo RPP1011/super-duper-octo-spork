@@ -10,6 +10,7 @@ edition = "2021"
 default = []
 gemini = ["dep:gemini-rust"]
 app = []
+stream-monitor = []
 
 [dependencies]
 base64 = "0.22"
@@ -32,6 +33,7 @@ winnow = "0.7"
 ndarray = "0.16"
 ndarray-npy = { version = "0.9", features = ["npz"] }
 memmap2 = "0.9"
+contracts = "0.6"
 
 [dev-dependencies]
 proptest = "1.6"

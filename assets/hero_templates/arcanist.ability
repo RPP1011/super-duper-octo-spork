@@ -42,7 +42,7 @@ ability LightningStorm {
 
 ability ArcaneBolt {
     target: enemy, range: 5.0
-    cooldown: 3s, cast: 200ms
+    cooldown: 3s, cast: 400ms
     hint: damage
 
     damage 40 [MAGIC: 50]

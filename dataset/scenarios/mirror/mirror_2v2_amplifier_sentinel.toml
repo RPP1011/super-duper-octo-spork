@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_amplifier_sentinel"
+seed = 36062
+hero_count = 2
+enemy_count = 0
+hero_templates = ["amplifier", "sentinel"]
+enemy_hero_templates = ["amplifier", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

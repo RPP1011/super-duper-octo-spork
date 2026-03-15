@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_charger_striker"
+seed = 50374
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "charger", "striker"]
+enemy_hero_templates = ["bulwark", "charger", "striker"]
+max_ticks = 800
+room_type = "Pressure"

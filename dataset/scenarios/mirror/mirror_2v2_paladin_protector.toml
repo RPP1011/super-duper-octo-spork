@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_paladin_protector"
+seed = 91351
+hero_count = 2
+enemy_count = 0
+hero_templates = ["paladin", "protector"]
+enemy_hero_templates = ["paladin", "protector"]
+max_ticks = 800
+room_type = "Pressure"

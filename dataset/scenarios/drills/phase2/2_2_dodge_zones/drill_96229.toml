@@ -1,0 +1,75 @@
+[scenario]
+name = "drill_2_2_dodge_96229"
+seed = 96229
+hero_count = 1
+enemy_count = 0
+max_ticks = 300
+room_type = "Entry"
+hero_templates = [
+    "scout",
+]
+enemy_hero_templates = []
+drill_type = "dodge_zones"
+target_position = [
+    18.0,
+    18.0,
+]
+action_mask = "move_only"
+
+[[scenario.hazards]]
+hazard_type = "damage_zone"
+position = [
+    7.9,
+    10.9,
+]
+radius = 3.0
+damage_per_tick = 5.0
+team = "neutral"
+
+[[scenario.hazards]]
+hazard_type = "damage_zone"
+position = [
+    5.3,
+    9.6,
+]
+radius = 2.4
+damage_per_tick = 5.0
+team = "neutral"
+
+[[scenario.hazards]]
+hazard_type = "damage_zone"
+position = [
+    12.0,
+    12.4,
+]
+radius = 2.4
+damage_per_tick = 5.0
+team = "neutral"
+
+[[scenario.hazards]]
+hazard_type = "damage_zone"
+position = [
+    10.4,
+    11.3,
+]
+radius = 2.2
+damage_per_tick = 5.0
+team = "neutral"
+
+[[scenario.hazards]]
+hazard_type = "damage_zone"
+position = [
+    9.8,
+    6.6,
+]
+radius = 2.9
+damage_per_tick = 5.0
+team = "neutral"
+
+[scenario.objective]
+objective_type = "reach_position"
+position = [
+    18.0,
+    18.0,
+]
+radius = 1.0

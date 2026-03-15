@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_plague_doctor_slinger_stunner"
+seed = 63849
+hero_count = 3
+enemy_count = 0
+hero_templates = ["plague_doctor", "slinger", "stunner"]
+enemy_hero_templates = ["plague_doctor", "slinger", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

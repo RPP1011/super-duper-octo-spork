@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_plague_doctor_zapper"
+seed = 34671
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "plague_doctor", "zapper"]
+enemy_hero_templates = ["bulwark", "plague_doctor", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

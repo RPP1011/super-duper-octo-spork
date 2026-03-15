@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_plague_doctor_warden_zapper"
+seed = 11413
+hero_count = 3
+enemy_count = 0
+hero_templates = ["plague_doctor", "warden", "zapper"]
+enemy_hero_templates = ["plague_doctor", "warden", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

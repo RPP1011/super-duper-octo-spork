@@ -95,7 +95,7 @@ impl Default for DamageType {
 // WHERE — Area shapes (7 total)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Area {
     SingleTarget,

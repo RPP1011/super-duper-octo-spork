@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_drainer"
+seed = 88172
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "drainer"]
+enemy_hero_templates = ["brute", "drainer"]
+max_ticks = 800
+room_type = "Pressure"

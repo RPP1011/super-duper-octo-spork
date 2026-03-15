@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_shatter_mage_slower"
+seed = 67954
+hero_count = 2
+enemy_count = 0
+hero_templates = ["shatter_mage", "slower"]
+enemy_hero_templates = ["shatter_mage", "slower"]
+max_ticks = 800
+room_type = "Pressure"

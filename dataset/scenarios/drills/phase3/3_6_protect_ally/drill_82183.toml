@@ -1,0 +1,32 @@
+[scenario]
+name = "drill_3_6_protect_82183"
+seed = 82183
+hero_count = 2
+enemy_count = 0
+max_ticks = 400
+room_type = "Entry"
+hero_templates = [
+    "duelist",
+    "cleric",
+]
+enemy_hero_templates = []
+drill_type = "protect_ally"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "brute"
+hp_override = 600
+dps_override = 30.0
+tag = "ally_attacker"
+target_preference = "ally"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 400
+dps_override = 0.0
+tag = "idle"
+
+[scenario.objective]
+objective_type = "survive"

@@ -184,6 +184,11 @@ class PreTensorizedData:
         pos_feat_np = np.zeros((N, max_positions, POSITION_DIM), dtype=np.float32)
         pos_mask_np = np.ones((N, max_positions), dtype=np.bool_)
 
+        # Aggregate features (V5: 16 floats, includes target direction)
+        AGG_DIM = 16
+        has_agg = any(s.get("aggregate_features") for s in all_steps[:10])
+        agg_feat_np = np.zeros((N, AGG_DIM), dtype=np.float32) if has_agg else None
+
         move_dirs_np = np.zeros(N, dtype=np.int64)
         combat_types_np = np.zeros(N, dtype=np.int64)
         target_indices_np = np.zeros(N, dtype=np.int64)
@@ -224,6 +229,12 @@ class PreTensorizedData:
                 n_p = len(positions)
                 pos_feat_np[i, :n_p] = positions
                 pos_mask_np[i, :n_p] = False
+
+            # Aggregate features
+            if agg_feat_np is not None:
+                agg = s.get("aggregate_features")
+                if agg and len(agg) >= AGG_DIM:
+                    agg_feat_np[i] = agg[:AGG_DIM]
 
             # Actions
             move_dirs_np[i] = s["move_dir"]
@@ -282,6 +293,12 @@ class PreTensorizedData:
         self.behav_lps = behav_lps.pin_memory()
         self.max_ents = max_ents
 
+        # Aggregate features (V5)
+        if agg_feat_np is not None:
+            self.agg_feat = torch.from_numpy(agg_feat_np).pin_memory()
+        else:
+            self.agg_feat = None
+
         # Ability CLS: list of (N, cls_dim) or None per slot — kept on CPU
         self.ability_cls: list[torch.Tensor | None] = [None] * MAX_ABILITIES
         if ability_cls_np is not None:
@@ -310,6 +327,8 @@ class PreTensorizedData:
             "position_features": self.pos_feat[idx_cpu].to(DEVICE, non_blocking=True),
             "position_mask": self.pos_mask[idx_cpu].to(DEVICE, non_blocking=True),
         }
+        if self.agg_feat is not None:
+            state["aggregate_features"] = self.agg_feat[idx_cpu].to(DEVICE, non_blocking=True)
         ab_cls = [t[idx_cpu].to(DEVICE, non_blocking=True) if t is not None else None for t in self.ability_cls]
         return state, ab_cls, self.combat_masks[idx_cpu].to(DEVICE, non_blocking=True)
 
@@ -442,7 +461,7 @@ def compute_policy_values(
 
         state, ability_cls, combat_masks = ptd.get_batch(idx)
 
-        output, value = model(
+        output, value, _h = model(
             state["entity_features"], state["entity_type_ids"],
             state["threat_features"], state["entity_mask"], state["threat_mask"],
             ability_cls,
@@ -652,16 +671,33 @@ def train_on_trajectories(
 
     # 4. Training pass with gradients
     model.train()
-    indices = np.random.permutation(N)
-    if max_train_steps > 0:
-        max_samples = max_train_steps * batch_size
-        if max_samples < N:
-            indices = indices[:max_samples]
-            N_eff = max_samples
+
+    # Sequential trajectory processing for GRU temporal context:
+    # Process each trajectory in order, carrying hidden state across steps.
+    # Truncated BPTT every TBPTT_LEN steps to limit memory.
+    TBPTT_LEN = 32
+    use_temporal = hasattr(model, 'temporal_gru')
+
+    if use_temporal:
+        # Build trajectory-ordered index sequences
+        traj_ordered_indices = []
+        for ti, traj in enumerate(trajectories):
+            start_idx, T = traj_start_indices[ti]
+            traj_ordered_indices.append(list(range(start_idx, start_idx + T)))
+        # Shuffle trajectory ORDER (not steps within) for stochastic training
+        traj_order = np.random.permutation(len(traj_ordered_indices))
+        N_eff = N
+    else:
+        indices = np.random.permutation(N)
+        if max_train_steps > 0:
+            max_samples = max_train_steps * batch_size
+            if max_samples < N:
+                indices = indices[:max_samples]
+                N_eff = max_samples
+            else:
+                N_eff = N
         else:
             N_eff = N
-    else:
-        N_eff = N
 
     LOG_PROB_MIN = -10.0  # clamp log probs to prevent -inf from masked pointers
 
@@ -670,14 +706,220 @@ def train_on_trajectories(
         "kl_div": 0.0, "n_steps": 0,
     }
 
-    for start in range(0, N_eff, batch_size):
+    def _run_batch(idx, h_prev_batch=None):
+        """Run one batch through the model and compute losses. Returns (metrics_delta, h_new)."""
+        B = len(idx)
+        state, ability_cls, combat_masks = ptd.get_batch(idx)
+
+        output, value, h_new = model(
+            state["entity_features"], state["entity_type_ids"],
+            state["threat_features"], state["entity_mask"], state["threat_mask"],
+            ability_cls,
+            state["position_features"], state["position_mask"],
+            h_prev=h_prev_batch,
+        )
+        return output, value, h_new, state, ability_cls, combat_masks, B
+
+    if use_temporal:
+        # ── Batched trajectory processing with truncated BPTT ──
+        # 1. Batch-encode ALL steps (fast, no GRU)
+        # 2. Group trajectories into batches, pad to max length
+        # 3. Run GRU as sequence on batched trajectories (cuDNN)
+        # 4. Compute losses on all steps at once
+
+        # Group trajectories into mini-batches of TRAJ_BATCH trajs
+        TRAJ_BATCH = min(64, len(traj_order))
+
+        # Step 1: Encode all steps at once (no GRU, just entity encoder + cross-attn)
+        all_enc_pooled = []
+        all_enc_tokens = []
+        all_enc_masks = []
+        all_enc_ability_cross = []
+        all_enc_type_ids = []
+        for start in range(0, N, batch_size):
+            end = min(start + batch_size, N)
+            idx = np.arange(start, end)
+            state, ability_cls_b, combat_masks_b = ptd.get_batch(idx)
+            with torch.no_grad():
+                enc = model.encode_state(
+                    state["entity_features"], state["entity_type_ids"],
+                    state["threat_features"], state["entity_mask"], state["threat_mask"],
+                    ability_cls_b,
+                    state["position_features"], state["position_mask"],
+                )
+            all_enc_pooled.append(enc["pooled"])
+            all_enc_tokens.append(enc["tokens"])
+            all_enc_masks.append(enc["full_mask"])
+            all_enc_ability_cross.append(enc["ability_cross_embs"])
+            all_enc_type_ids.append(enc["full_type_ids"])
+
+        # Concatenate encoded representations
+        enc_pooled = torch.cat(all_enc_pooled, dim=0)  # (N, d)
+        enc_tokens = torch.cat(all_enc_tokens, dim=0)  # (N, S, d)
+        enc_masks = torch.cat(all_enc_masks, dim=0)  # (N, S)
+        enc_type_ids = torch.cat(all_enc_type_ids, dim=0)  # (N, S)
+        # Merge ability cross embs
+        enc_ab_cross = [None] * MAX_ABILITIES
+        for ab_idx in range(MAX_ABILITIES):
+            parts = [batch_ab[ab_idx] for batch_ab in all_enc_ability_cross if batch_ab[ab_idx] is not None]
+            if parts:
+                enc_ab_cross[ab_idx] = torch.cat(parts, dim=0)
+
+        # Free intermediate lists
+        del all_enc_pooled, all_enc_tokens, all_enc_masks, all_enc_ability_cross, all_enc_type_ids
+
+        # Step 2: Process trajectory batches with GRU
+        for tb_start in range(0, len(traj_order), TRAJ_BATCH):
+            tb_end = min(tb_start + TRAJ_BATCH, len(traj_order))
+            batch_traj_idxs = traj_order[tb_start:tb_end]
+            traj_lens = [len(traj_ordered_indices[ti]) for ti in batch_traj_idxs]
+            T_max = max(traj_lens)
+            B_traj = len(batch_traj_idxs)
+
+            # Collect flat indices for all steps in this traj batch
+            flat_indices = []
+            for ti in batch_traj_idxs:
+                flat_indices.extend(traj_ordered_indices[ti])
+            flat_indices = np.array(flat_indices)
+            B_flat = len(flat_indices)
+
+            # Truncated BPTT: process in chunks of TBPTT_LEN along time axis
+            h = None
+            for t_start in range(0, T_max, TBPTT_LEN):
+                t_end = min(t_start + TBPTT_LEN, T_max)
+                chunk_T = t_end - t_start
+
+                if h is not None:
+                    h = h.detach()
+
+                # Gather pooled for this time chunk: (chunk_T, B_traj, d)
+                d = model.d_model
+                chunk_pooled = torch.zeros(chunk_T, B_traj, d, device=DEVICE)
+                chunk_step_indices = []  # flat index for each valid (t, b) position
+
+                for b, ti in enumerate(batch_traj_idxs):
+                    traj_seq = traj_ordered_indices[ti]
+                    T_this = len(traj_seq)
+                    for t in range(t_start, min(t_end, T_this)):
+                        flat_idx = traj_seq[t]
+                        chunk_pooled[t - t_start, b] = enc_pooled[flat_idx]
+                        chunk_step_indices.append(flat_idx)
+
+                chunk_step_indices = np.array(chunk_step_indices)
+
+                # Run GRU on chunk
+                if h is None:
+                    h = torch.zeros(B_traj, model.h_dim, device=DEVICE)
+                gru_outputs = []
+                for t in range(chunk_T):
+                    h = model.temporal_gru.gru(chunk_pooled[t], h)
+                    gru_outputs.append(h)
+                gru_out = torch.stack(gru_outputs, dim=0)  # (chunk_T, B_traj, h_dim)
+
+                # Project and flatten valid steps
+                pooled_enriched_list = []
+                valid_flat_indices = []
+                for b, ti in enumerate(batch_traj_idxs):
+                    traj_seq = traj_ordered_indices[ti]
+                    T_this = len(traj_seq)
+                    for t in range(t_start, min(t_end, T_this)):
+                        pooled_enriched_list.append(gru_out[t - t_start, b])
+                        valid_flat_indices.append(traj_seq[t])
+
+                if not pooled_enriched_list:
+                    continue
+
+                valid_flat_indices = np.array(valid_flat_indices)
+                pooled_enriched = model.temporal_gru.proj(torch.stack(pooled_enriched_list))  # (K, d)
+                K = len(valid_flat_indices)
+
+                # Gather encoded state for valid steps and run decision heads
+                output, value = model.decide(
+                    pooled_enriched,
+                    enc_tokens[valid_flat_indices],
+                    enc_masks[valid_flat_indices],
+                    [ab[valid_flat_indices] if ab is not None else None for ab in enc_ab_cross],
+                    enc_type_ids[valid_flat_indices],
+                )
+
+                # Compute losses (same as non-temporal path)
+                move_logp = F.log_softmax(output["move_logits"], dim=-1)
+                combat_masks_k = ptd.combat_masks[valid_flat_indices].to(DEVICE)
+                combat_logits_masked = output["combat_logits"].masked_fill(~combat_masks_k, -1e9)
+                combat_logp = F.log_softmax(combat_logits_masked, dim=-1)
+
+                batch_lp = torch.zeros(K, device=DEVICE)
+                batch_ent = torch.zeros(K, device=DEVICE)
+
+                move_dirs_k = ptd.move_dirs[valid_flat_indices].to(DEVICE)
+                batch_lp += move_logp.gather(1, move_dirs_k.unsqueeze(1)).squeeze(1).clamp(min=LOG_PROB_MIN)
+                batch_ent += -(move_logp.exp() * move_logp).sum(-1)
+
+                combat_types_k = ptd.combat_types[valid_flat_indices].to(DEVICE)
+                batch_lp += combat_logp.gather(1, combat_types_k.unsqueeze(1)).squeeze(1).clamp(min=LOG_PROB_MIN)
+                batch_ent += -(combat_logp.exp() * combat_logp).sum(-1)
+
+                target_indices_k = ptd.target_indices[valid_flat_indices].to(DEVICE).clamp(max=output["attack_ptr"].shape[1] - 1)
+                attack_mask = (combat_types_k == 0)
+                if attack_mask.any():
+                    atk_logp = F.log_softmax(output["attack_ptr"], dim=-1)
+                    sel_lp = atk_logp.gather(1, target_indices_k.unsqueeze(1)).squeeze(1).clamp(min=LOG_PROB_MIN)
+                    batch_lp += torch.where(attack_mask, sel_lp, torch.zeros_like(sel_lp))
+                    batch_ent += torch.where(attack_mask, -(atk_logp.exp() * atk_logp).sum(-1), torch.zeros_like(sel_lp))
+
+                ab_ptrs = output.get("ability_ptrs", [])
+                for ab_idx, ab_ptr in enumerate(ab_ptrs):
+                    if ab_ptr is None:
+                        continue
+                    ab_mask = (combat_types_k == ab_idx + 2)
+                    if not ab_mask.any():
+                        continue
+                    ab_logp = F.log_softmax(ab_ptr, dim=-1)
+                    ti_clamped = target_indices_k.clamp(max=ab_logp.shape[1] - 1)
+                    sel_lp = ab_logp.gather(1, ti_clamped.unsqueeze(1)).squeeze(1).clamp(min=LOG_PROB_MIN)
+                    batch_lp += torch.where(ab_mask, sel_lp, torch.zeros_like(sel_lp))
+                    batch_ent += torch.where(ab_mask, -(ab_logp.exp() * ab_logp).sum(-1), torch.zeros_like(sel_lp))
+
+                batch_adv = adv_tensor[valid_flat_indices]
+                batch_vtarget = vtarget_tensor[valid_flat_indices]
+                behav_lps_batch = ptd.behav_lps[valid_flat_indices].to(DEVICE)
+
+                policy_loss = -(batch_lp * batch_adv.detach()).mean()
+                value_loss = 0.5 * (value.squeeze(-1) - batch_vtarget.detach()).pow(2).mean()
+                entropy_loss = -entropy_coeff * batch_ent.mean()
+                kl_div = (behav_lps_batch - batch_lp).abs().mean()
+                kl_penalty = kl_coeff * kl_div
+
+                if freeze_policy:
+                    loss = value_coeff * value_loss
+                else:
+                    loss = policy_loss + value_coeff * value_loss + entropy_loss + kl_penalty
+
+                optimizer.zero_grad()
+                loss.backward()
+                if grokfast is not None:
+                    grokfast.step()
+                nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                optimizer.step()
+
+                metrics["policy_loss"] += policy_loss.item() * K
+                metrics["value_loss"] += value_loss.item() * K
+                metrics["entropy"] += batch_ent.mean().item() * K
+                metrics["kl_div"] += kl_div.item() * K
+                metrics["n_steps"] += K
+    else:
+        # ── Original shuffled batch processing (no temporal context) ──
+        N_eff_loop = N_eff
+
+    if not use_temporal:
+      for start in range(0, N_eff, batch_size):
         end = min(start + batch_size, N_eff)
         idx = indices[start:end]
         B = len(idx)
 
         state, ability_cls, combat_masks = ptd.get_batch(idx)
 
-        output, value = model(
+        output, value, _h = model(
             state["entity_features"], state["entity_type_ids"],
             state["threat_features"], state["entity_mask"], state["threat_mask"],
             ability_cls,
@@ -799,6 +1041,8 @@ def start_gpu_server(
     entity_encoder_layers: int = 4,
     external_cls_dim: int = 0,
     temperature: float = 1.0,
+    h_dim: int = 0,
+    model_version: int = 4,
 ) -> subprocess.Popen:
     """Start GPU inference server (shared memory) as subprocess."""
     cmd = [
@@ -815,6 +1059,10 @@ def start_gpu_server(
     ]
     if external_cls_dim > 0:
         cmd.extend(["--external-cls-dim", str(external_cls_dim)])
+    if h_dim > 0:
+        cmd.extend(["--h-dim", str(h_dim)])
+    if model_version != 4:
+        cmd.extend(["--model-version", str(model_version)])
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -894,6 +1142,8 @@ def generate_episodes(
     embedding_registry: str | None = None,
     enemy_weights: str | None = None,
     enemy_registry: str | None = None,
+    self_play_gpu: bool = False,
+    swap_sides: bool = False,
     gpu_shm: str | None = None,
     sims_per_thread: int = 1,
 ) -> tuple[float, str]:
@@ -922,6 +1172,10 @@ def generate_episodes(
         cmd.extend(["--enemy-weights", enemy_weights])
     if enemy_registry:
         cmd.extend(["--enemy-registry", enemy_registry])
+    if self_play_gpu:
+        cmd.append("--self-play-gpu")
+    if swap_sides:
+        cmd.append("--swap-sides")
 
     t0 = time.time()
     # Stream stderr live so user sees progress, capture it for parsing
@@ -1011,6 +1265,8 @@ def main():
     p.add_argument("--n-heads", type=int, default=4)
     p.add_argument("--entity-encoder-layers", type=int, default=4)
     p.add_argument("--external-cls-dim", type=int, default=0)
+    p.add_argument("--h-dim", type=int, default=0,
+                   help="GRU hidden dimension for temporal context (0 = disabled)")
 
     # Episode generation
     p.add_argument("--embedding-registry",
@@ -1077,6 +1333,10 @@ def main():
 
     # Self-play (league training)
     p.add_argument("--enemy-weights", help="Enemy policy weights JSON")
+    p.add_argument("--self-play-gpu", action="store_true",
+                   help="Both teams use the same GPU inference server (symmetric self-play)")
+    p.add_argument("--swap-sides", action="store_true",
+                   help="Play each scenario from both sides (doubles episodes per iter)")
     p.add_argument("--enemy-registry", help="Enemy embedding registry JSON")
 
     # Eval
@@ -1106,10 +1366,12 @@ def main():
     cls_dim = embedding_registry["d_model"] if embedding_registry else args.d_model
 
     # Build model
+    h_dim = args.h_dim if args.h_dim > 0 else 64
     model = AbilityActorCriticV4(
         vocab_size=tok.vocab_size,
         entity_encoder_layers=args.entity_encoder_layers,
         external_cls_dim=args.external_cls_dim,
+        h_dim=h_dim,
         d_model=args.d_model,
         d_ff=args.d_ff,
         n_layers=args.n_layers,
@@ -1198,6 +1460,7 @@ def main():
             entity_encoder_layers=args.entity_encoder_layers,
             external_cls_dim=args.external_cls_dim,
             temperature=args.temperature,
+            h_dim=args.h_dim,
         )
         gpu_shm_path = f"{SHM_PATH_PREFIX}{args.shm_name}"
         print(f"GPU server ready at {gpu_shm_path}")
@@ -1258,6 +1521,8 @@ def main():
             embedding_registry=args.embedding_registry,
             enemy_weights=args.enemy_weights,
             enemy_registry=args.enemy_registry,
+            self_play_gpu=args.self_play_gpu,
+            swap_sides=args.swap_sides,
             gpu_shm=gpu_shm_path,
             sims_per_thread=args.sims_per_thread,
         )

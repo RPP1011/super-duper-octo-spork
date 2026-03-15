@@ -3,7 +3,7 @@ use super::collect_toml_paths;
 
 pub fn run_oracle_student(args: crate::cli::OracleStudentArgs) -> ExitCode {
     use bevy_game::ai::core::dataset::extract_unit_features;
-    use bevy_game::ai::core::{step, is_alive, Team, FIXED_TICK_MS, UnitIntent};
+    use bevy_game::ai::core::{step, is_alive, IntentAction, Team, FIXED_TICK_MS, UnitIntent};
     use bevy_game::ai::core::ability_eval::{AbilityEvalWeights, evaluate_abilities};
     use bevy_game::ai::squad::generate_intents;
     use bevy_game::scenario::{load_scenario_file, run_scenario_to_state};
@@ -66,6 +66,38 @@ pub fn run_oracle_student(args: crate::cli::OracleStudentArgs) -> ExitCode {
         for _ in 0..cfg.max_ticks {
             let mut intents = generate_intents(&sim, &mut squad_ai, FIXED_TICK_MS);
 
+            // ---------------------------------------------------------------
+            // Coordinated hero targeting: all heroes agree on the same
+            // priority target.  This is the single biggest advantage heroes
+            // get over the base squad AI (which each unit targets independently).
+            // ---------------------------------------------------------------
+            let team_target = {
+                let living_heroes: Vec<_> = sim.units.iter()
+                    .filter(|u| u.team == Team::Hero && is_alive(u))
+                    .collect();
+                let hero_centroid = if !living_heroes.is_empty() {
+                    let cx = living_heroes.iter().map(|u| u.position.x).sum::<f32>() / living_heroes.len() as f32;
+                    let cy = living_heroes.iter().map(|u| u.position.y).sum::<f32>() / living_heroes.len() as f32;
+                    bevy_game::ai::core::SimVec2 { x: cx, y: cy }
+                } else {
+                    bevy_game::ai::core::SimVec2 { x: 0.0, y: 0.0 }
+                };
+                // Use a synthetic "average hero" for team-wide priority
+                let dummy_hero = bevy_game::ai::core::UnitState {
+                    position: hero_centroid,
+                    ..sim.units.iter().find(|u| u.team == Team::Hero && is_alive(u))
+                        .cloned().unwrap_or_else(|| sim.units[0].clone())
+                };
+                sim.units.iter()
+                    .filter(|u| u.team == Team::Enemy && is_alive(u))
+                    .min_by(|a, b| {
+                        let sa = hero_target_priority(a, &dummy_hero);
+                        let sb = hero_target_priority(b, &dummy_hero);
+                        sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|u| u.id)
+            };
+
             for &uid in &hero_ids {
                 if !sim.units.iter().any(|u| u.id == uid && is_alive(u)) { continue; }
                 if let Some(u) = sim.units.iter().find(|u| u.id == uid) {
@@ -83,16 +115,169 @@ pub fn run_oracle_student(args: crate::cli::OracleStudentArgs) -> ExitCode {
                     }
                 }
 
-                // Phase 2: Student model handles attack/move/hold
-                let features = extract_unit_features(&sim, &squad_ai, uid);
-                let action = if is_combat_model {
-                    let class = student_predict_combat(&weights, &features);
-                    combat_class_to_intent(class, uid, &sim)
-                } else {
-                    let class = student_predict(&weights, &features);
-                    action_class_to_intent(class, uid, &sim)
+                // Phase 2: Hero tactical override with ability integration.
+                let unit = match sim.units.iter().find(|u| u.id == uid) {
+                    Some(u) => u,
+                    None => continue,
                 };
-                if let Some(action) = action {
+                let hp_pct = unit.hp as f32 / unit.max_hp.max(1) as f32;
+                let has_dsl_abilities = !unit.abilities.is_empty();
+
+                // --- DSL abilities first (template heroes) ---
+                if has_dsl_abilities {
+                    use bevy_game::ai::effects::AbilityTarget;
+
+                    // DSL Heal: target most-hurt ally (or self)
+                    let has_heal_ready = unit.abilities.iter().any(|s| {
+                        s.cooldown_remaining_ms == 0 && s.def.ai_hint.as_str() == "heal"
+                    });
+                    if has_heal_ready {
+                        let hurt_ally = sim.units.iter()
+                            .filter(|u| u.team == Team::Hero && is_alive(u) && u.id != uid)
+                            .filter(|u| (u.hp as f32 / u.max_hp.max(1) as f32) < 0.50)
+                            .min_by_key(|u| u.hp);
+                        let heal_self = hp_pct < 0.50;
+                        let heal_target = hurt_ally.map(|a| a.id).or(if heal_self { Some(uid) } else { None });
+                        if let Some(ally_id) = heal_target {
+                            let ally_pos = sim.units.iter().find(|u| u.id == ally_id)
+                                .map(|u| u.position).unwrap_or(unit.position);
+                            'heal_search: for (idx, slot) in unit.abilities.iter().enumerate() {
+                                if slot.cooldown_remaining_ms > 0 { continue; }
+                                if slot.def.ai_hint.as_str() != "heal" { continue; }
+                                let in_range = slot.def.range <= 0.0
+                                    || bevy_game::ai::core::distance(unit.position, ally_pos) <= slot.def.range;
+                                if !in_range { continue; }
+                                let target = match slot.def.targeting {
+                                    bevy_game::ai::effects::AbilityTargeting::TargetAlly =>
+                                        AbilityTarget::Unit(ally_id),
+                                    bevy_game::ai::effects::AbilityTargeting::SelfCast
+                                    | bevy_game::ai::effects::AbilityTargeting::SelfAoe =>
+                                        AbilityTarget::None,
+                                    _ => AbilityTarget::Unit(ally_id),
+                                };
+                                intents.retain(|i| i.unit_id != uid);
+                                intents.push(UnitIntent { unit_id: uid,
+                                    action: IntentAction::UseAbility { ability_index: idx, target } });
+                                ability_fires += 1;
+                                break 'heal_search;
+                            }
+                            // If we pushed a heal intent, skip to next hero
+                            if intents.iter().any(|i| i.unit_id == uid && matches!(i.action, IntentAction::UseAbility { .. })) {
+                                continue;
+                            }
+                        }
+                    }
+
+                    // DSL combat abilities (damage, CC, utility, defense)
+                    if let Some(tid) = team_target {
+                        use bevy_game::ai::squad::combat_evaluate_hero_ability;
+                        if let Some(ability_action) = combat_evaluate_hero_ability(&sim, uid, tid) {
+                            intents.retain(|i| i.unit_id != uid);
+                            intents.push(UnitIntent { unit_id: uid, action: ability_action });
+                            ability_fires += 1;
+                            continue;
+                        }
+                    }
+                }
+
+                // --- Legacy flat-field abilities (non-template units) ---
+                if !has_dsl_abilities {
+                    if unit.heal_amount > 0 && unit.heal_cooldown_remaining_ms == 0 {
+                        let hurt_ally = sim.units.iter()
+                            .filter(|u| u.team == Team::Hero && is_alive(u) && u.id != uid)
+                            .filter(|u| (u.hp as f32 / u.max_hp.max(1) as f32) < 0.50)
+                            .min_by_key(|u| u.hp);
+                        if let Some(ally) = hurt_ally {
+                            let dist = bevy_game::ai::core::distance(unit.position, ally.position);
+                            if dist <= unit.heal_range {
+                                intents.retain(|i| i.unit_id != uid);
+                                intents.push(UnitIntent { unit_id: uid,
+                                    action: IntentAction::CastHeal { target_id: ally.id } });
+                                ability_fires += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    if unit.control_duration_ms > 0 && unit.control_cooldown_remaining_ms == 0 {
+                        if let Some(tid) = team_target {
+                            if let Some(t) = sim.units.iter().find(|u| u.id == tid) {
+                                let dist = bevy_game::ai::core::distance(unit.position, t.position);
+                                if dist <= unit.control_range && t.control_remaining_ms == 0 {
+                                    intents.retain(|i| i.unit_id != uid);
+                                    intents.push(UnitIntent { unit_id: uid,
+                                        action: IntentAction::CastControl { target_id: tid } });
+                                    ability_fires += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    if unit.ability_damage > 0 && unit.ability_cooldown_remaining_ms == 0 {
+                        if let Some(tid) = team_target {
+                            if let Some(t) = sim.units.iter().find(|u| u.id == tid) {
+                                let dist = bevy_game::ai::core::distance(unit.position, t.position);
+                                if dist <= unit.ability_range {
+                                    intents.retain(|i| i.unit_id != uid);
+                                    intents.push(UnitIntent { unit_id: uid,
+                                        action: IntentAction::CastAbility { target_id: tid } });
+                                    ability_fires += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- Coordinated focus-fire attack ---
+                let target_id = team_target.or_else(|| {
+                    sim.units.iter()
+                        .filter(|u| u.team != unit.team && is_alive(u))
+                        .min_by(|a, b| {
+                            let sa = hero_target_priority(a, unit);
+                            let sb = hero_target_priority(b, unit);
+                            sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|u| u.id)
+                });
+
+                if let Some(tid) = target_id {
+                    let target = match sim.units.iter().find(|u| u.id == tid) {
+                        Some(t) => t,
+                        None => continue,
+                    };
+                    let dist = bevy_game::ai::core::distance(unit.position, target.position);
+
+                    // Low HP kiting
+                    if hp_pct < 0.25 && dist < 2.0 {
+                        let nearest_enemy = sim.units.iter()
+                            .filter(|u| u.team != unit.team && is_alive(u))
+                            .min_by(|a, b| {
+                                let da = bevy_game::ai::core::distance(unit.position, a.position);
+                                let db = bevy_game::ai::core::distance(unit.position, b.position);
+                                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                        if let Some(ne) = nearest_enemy {
+                            let away = bevy_game::ai::core::move_away(
+                                unit.position, ne.position,
+                                unit.move_speed_per_sec * (FIXED_TICK_MS as f32 / 1000.0) * 0.5);
+                            intents.retain(|i| i.unit_id != uid);
+                            intents.push(UnitIntent { unit_id: uid,
+                                action: IntentAction::MoveTo { position: away } });
+                            student_fires += 1;
+                            continue;
+                        }
+                    }
+
+                    let action = if dist <= unit.attack_range {
+                        IntentAction::Attack { target_id: tid }
+                    } else {
+                        let desired = bevy_game::ai::core::position_at_range(
+                            unit.position, target.position, unit.attack_range * 0.9);
+                        let next = bevy_game::ai::core::move_towards(
+                            unit.position, desired,
+                            unit.move_speed_per_sec * (FIXED_TICK_MS as f32 / 1000.0));
+                        IntentAction::MoveTo { position: next }
+                    };
                     intents.retain(|i| i.unit_id != uid);
                     intents.push(UnitIntent { unit_id: uid, action });
                     student_fires += 1;
@@ -343,5 +528,216 @@ fn action_class_to_intent(
         }
         ActionClass::Hold => Some(IntentAction::Hold),
     }
+}
+
+/// Priority scoring for hero target selection (lower = higher priority).
+///
+/// Prioritizes:
+/// 1. Healers/CC units (Mystics) — they sustain the enemy team
+/// 2. Low absolute HP — secure kills to reduce incoming DPS
+/// 3. Proximity — don't walk past enemies to reach backline
+pub(crate) fn hero_target_priority(enemy: &bevy_game::ai::core::UnitState, hero: &bevy_game::ai::core::UnitState) -> f32 {
+    let dist = bevy_game::ai::core::distance(hero.position, enemy.position);
+
+    // Healer/CC threat: units with heal or CC capabilities are high priority
+    let is_healer = enemy.heal_amount > 0;
+    let is_controller = enemy.control_duration_ms > 0;
+    let threat_bonus = if is_healer { -200.0 } else { 0.0 }
+                     + if is_controller { -100.0 } else { 0.0 };
+
+    // Low HP bonus: strongly prefer enemies we can finish off
+    let hp_score = enemy.hp as f32;
+
+    // Distance penalty: slight preference for closer targets
+    let dist_penalty = dist * 5.0;
+
+    // DPS threat: higher-DPS enemies are more dangerous
+    let dps = if enemy.attack_cooldown_ms > 0 {
+        enemy.attack_damage as f32 / (enemy.attack_cooldown_ms as f32 / 1000.0)
+    } else {
+        enemy.attack_damage as f32
+    };
+    let dps_bonus = -dps * 2.0;
+
+    hp_score + dist_penalty + threat_bonus + dps_bonus
+}
+
+/// Tactical override for a single hero unit. Returns Some(action) if the hero
+/// should do something specific, None to fall through to the default behavior.
+///
+/// Used by both the `scenario oracle student` eval path and the RL episode
+/// runner's Combined policy path.
+pub(crate) fn tactical_hero_override(
+    sim: &bevy_game::ai::core::SimState,
+    uid: u32,
+    team_target: Option<u32>,
+) -> Option<bevy_game::ai::core::IntentAction> {
+    use bevy_game::ai::core::{is_alive, distance, move_away, IntentAction, Team};
+
+    let unit = sim.units.iter().find(|u| u.id == uid)?;
+    let hp_pct = unit.hp as f32 / unit.max_hp.max(1) as f32;
+    let has_dsl_abilities = !unit.abilities.is_empty();
+
+    // ---------------------------------------------------------------
+    // DSL abilities (template heroes): check BEFORE legacy flat fields.
+    // Template heroes have abilities in unit.abilities with ai_hint tags;
+    // their legacy flat fields (heal_amount, control_duration_ms, etc.)
+    // are all zero, so checking those first would skip all ability usage.
+    // ---------------------------------------------------------------
+    if has_dsl_abilities {
+        use bevy_game::ai::effects::AbilityTarget;
+
+        // --- DSL Heal: find a heal ability and target the most hurt ally ---
+        let has_heal_ready = unit.abilities.iter().enumerate().any(|(_, s)| {
+            s.cooldown_remaining_ms == 0
+                && matches!(s.def.ai_hint.as_str(), "heal")
+        });
+        if has_heal_ready {
+            let hurt_ally = sim.units.iter()
+                .filter(|u| u.team == Team::Hero && is_alive(u) && u.id != uid)
+                .filter(|u| (u.hp as f32 / u.max_hp.max(1) as f32) < 0.50)
+                .min_by_key(|u| u.hp);
+            // Also consider self-heal when own HP is low
+            let heal_self = hp_pct < 0.50;
+            let heal_target = hurt_ally.map(|a| a.id).or(if heal_self { Some(uid) } else { None });
+            if let Some(ally_id) = heal_target {
+                let ally_pos = sim.units.iter().find(|u| u.id == ally_id)
+                    .map(|u| u.position).unwrap_or(unit.position);
+                for (idx, slot) in unit.abilities.iter().enumerate() {
+                    if slot.cooldown_remaining_ms > 0 { continue; }
+                    if slot.def.ai_hint.as_str() != "heal" { continue; }
+                    // Range check
+                    let in_range = slot.def.range <= 0.0
+                        || distance(unit.position, ally_pos) <= slot.def.range;
+                    if !in_range { continue; }
+                    let target = match slot.def.targeting {
+                        bevy_game::ai::effects::AbilityTargeting::TargetAlly =>
+                            AbilityTarget::Unit(ally_id),
+                        bevy_game::ai::effects::AbilityTargeting::SelfCast
+                        | bevy_game::ai::effects::AbilityTargeting::SelfAoe =>
+                            AbilityTarget::None,
+                        _ => AbilityTarget::Unit(ally_id),
+                    };
+                    return Some(IntentAction::UseAbility { ability_index: idx, target });
+                }
+            }
+        }
+
+        // --- DSL combat abilities (damage, CC, utility, defense, etc.) ---
+        // Use the squad AI's scoring function which handles all ai_hint types,
+        // threat-reduction scoring, conditional combos, AoE, etc.
+        if let Some(tid) = team_target {
+            use bevy_game::ai::squad::combat_evaluate_hero_ability;
+            if let Some(action) = combat_evaluate_hero_ability(sim, uid, tid) {
+                return Some(action);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Legacy flat-field abilities (non-template units only).
+    // These are kept as fallback for units that don't use the DSL system.
+    // ---------------------------------------------------------------
+    if !has_dsl_abilities {
+        // Heal allies below 50%
+        if unit.heal_amount > 0 && unit.heal_cooldown_remaining_ms == 0 {
+            let hurt_ally = sim.units.iter()
+                .filter(|u| u.team == Team::Hero && is_alive(u) && u.id != uid)
+                .filter(|u| (u.hp as f32 / u.max_hp.max(1) as f32) < 0.50)
+                .min_by_key(|u| u.hp);
+            if let Some(ally) = hurt_ally {
+                if distance(unit.position, ally.position) <= unit.heal_range {
+                    return Some(IntentAction::CastHeal { target_id: ally.id });
+                }
+            }
+        }
+
+        // CC the focus target
+        if unit.control_duration_ms > 0 && unit.control_cooldown_remaining_ms == 0 {
+            if let Some(tid) = team_target {
+                if let Some(t) = sim.units.iter().find(|u| u.id == tid) {
+                    if distance(unit.position, t.position) <= unit.control_range && t.control_remaining_ms == 0 {
+                        return Some(IntentAction::CastControl { target_id: tid });
+                    }
+                }
+            }
+        }
+
+        // Ability damage on focus target
+        if unit.ability_damage > 0 && unit.ability_cooldown_remaining_ms == 0 {
+            if let Some(tid) = team_target {
+                if let Some(t) = sim.units.iter().find(|u| u.id == tid) {
+                    if distance(unit.position, t.position) <= unit.ability_range {
+                        return Some(IntentAction::CastAbility { target_id: tid });
+                    }
+                }
+            }
+        }
+    }
+
+    // Focus-fire attack on team target (or nearest enemy)
+    let target_id = team_target.or_else(|| {
+        sim.units.iter()
+            .filter(|u| u.team != unit.team && is_alive(u))
+            .min_by(|a, b| {
+                hero_target_priority(a, unit)
+                    .partial_cmp(&hero_target_priority(b, unit))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|u| u.id)
+    });
+
+    if let Some(tid) = target_id {
+        if let Some(target) = sim.units.iter().find(|u| u.id == tid) {
+            let dist = distance(unit.position, target.position);
+
+            // Low HP kiting
+            if hp_pct < 0.25 && dist < 2.0 {
+                let nearest_enemy = sim.units.iter()
+                    .filter(|u| u.team != unit.team && is_alive(u))
+                    .min_by(|a, b| {
+                        distance(unit.position, a.position)
+                            .partial_cmp(&distance(unit.position, b.position))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                if let Some(ne) = nearest_enemy {
+                    let away = move_away(unit.position, ne.position, unit.move_speed_per_sec * 0.1);
+                    return Some(IntentAction::MoveTo { position: away });
+                }
+            }
+
+            return Some(IntentAction::Attack { target_id: tid });
+        }
+    }
+
+    None
+}
+
+/// Compute the coordinated team target for all heroes.
+pub(crate) fn compute_team_target(sim: &bevy_game::ai::core::SimState) -> Option<u32> {
+    use bevy_game::ai::core::{is_alive, Team, SimVec2};
+
+    let living_heroes: Vec<_> = sim.units.iter()
+        .filter(|u| u.team == Team::Hero && is_alive(u))
+        .collect();
+    if living_heroes.is_empty() {
+        return None;
+    }
+
+    let cx = living_heroes.iter().map(|u| u.position.x).sum::<f32>() / living_heroes.len() as f32;
+    let cy = living_heroes.iter().map(|u| u.position.y).sum::<f32>() / living_heroes.len() as f32;
+    let dummy_hero = bevy_game::ai::core::UnitState {
+        position: SimVec2 { x: cx, y: cy },
+        ..living_heroes[0].clone()
+    };
+
+    sim.units.iter()
+        .filter(|u| u.team == Team::Enemy && is_alive(u))
+        .min_by(|a, b| {
+            hero_target_priority(a, &dummy_hero)
+                .partial_cmp(&hero_target_priority(b, &dummy_hero))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|u| u.id)
 }
 

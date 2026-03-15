@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+use contracts::*;
 use crate::ai::effects::{ScalingTerm, StatRef, StatusKind};
 
 use super::types::*;
@@ -19,6 +20,15 @@ pub fn is_alive(unit: &UnitState) -> bool {
     unit.hp > 0
 }
 
+/// Clear casting/channeling/CC state when a unit dies.
+pub fn clear_dead_unit_state(unit: &mut UnitState) {
+    unit.casting = None;
+    unit.channeling = None;
+    unit.control_remaining_ms = 0;
+}
+
+#[requires(idx < state.units.len())]
+#[requires(target_pos.x.is_finite() && target_pos.y.is_finite())]
 pub fn move_towards_position(
     idx: usize,
     target_pos: SimVec2,
@@ -46,6 +56,13 @@ pub fn move_towards_position(
         return;
     }
     state.units[idx].position = next;
+
+    // Refresh elevation after movement (cover_bonus is direction-dependent
+    // and refreshed per-tick in the scenario/sim_bridge loop)
+    if let Some(ref nav) = state.grid_nav {
+        state.units[idx].elevation = nav.elevation_at_pos(next);
+    }
+
     events.push(SimEvent::Moved {
         tick,
         unit_id: state.units[idx].id,

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_executioner_guardian"
+seed = 44179
+hero_count = 2
+enemy_count = 0
+hero_templates = ["executioner", "guardian"]
+enemy_hero_templates = ["executioner", "guardian"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_sniper"
+seed = 66985
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "sniper"]
+enemy_hero_templates = ["brute", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

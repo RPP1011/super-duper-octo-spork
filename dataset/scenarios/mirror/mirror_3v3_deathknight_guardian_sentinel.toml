@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_deathknight_guardian_sentinel"
+seed = 18180
+hero_count = 3
+enemy_count = 0
+hero_templates = ["deathknight", "guardian", "sentinel"]
+enemy_hero_templates = ["deathknight", "guardian", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

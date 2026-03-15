@@ -2,7 +2,7 @@
 
 ability PowerShot {
     target: enemy, range: 8.0
-    cooldown: 3500ms, cast: 300ms
+    cooldown: 3500ms, cast: 500ms
     hint: damage
 
     deliver projectile { speed: 12.0, pierce, width: 0.3 } {
@@ -65,7 +65,7 @@ ability HuntersMark {
 
 ability ExplosiveArrow {
     target: enemy, range: 7.0
-    cooldown: 6s, cast: 300ms
+    cooldown: 6s, cast: 400ms
     hint: damage
 
     deliver projectile { speed: 10.0, width: 0.3 } {

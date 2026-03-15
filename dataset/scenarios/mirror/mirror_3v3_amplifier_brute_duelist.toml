@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_brute_duelist"
+seed = 88172
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "brute", "duelist"]
+enemy_hero_templates = ["amplifier", "brute", "duelist"]
+max_ticks = 800
+room_type = "Pressure"

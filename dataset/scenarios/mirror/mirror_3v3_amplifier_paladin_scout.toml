@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_paladin_scout"
+seed = 48559
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "paladin", "scout"]
+enemy_hero_templates = ["amplifier", "paladin", "scout"]
+max_ticks = 800
+room_type = "Pressure"

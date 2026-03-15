@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use bevy_game::ai::core::{SimEvent, SimState, Team};
+use bevy_game::ai::goap::dsl::{load_goap_file, GoapDef};
+use bevy_game::ai::goap::GoapAiState;
 use bevy_game::ai::personality::PersonalityProfile;
 use bevy_game::ai::roles::Role;
 
@@ -162,6 +165,92 @@ pub fn condense_state(
         recent_events: events,
         room_width,
         room_depth,
+    }
+}
+
+/// Map a hero template name to a .goap behavior file.
+/// Falls back to role-based assignment if no template-specific behavior exists.
+fn goap_file_for_template(template: &str, role: Role, behaviors_dir: &Path) -> &'static str {
+    // Check for template-specific .goap file first
+    let specific = behaviors_dir.join(format!("{}.goap", template));
+    if specific.exists() {
+        // Can't return a dynamic string as &'static str, so we use the
+        // template-to-archetype mapping below instead
+    }
+
+    // Map known templates to archetypes (or template-specific .goap files)
+    match template {
+        // Template-specific behaviors
+        "engineer" => "engineer.goap",
+        // Melee / tank archetypes
+        "warrior" | "knight" | "paladin" | "berserker" => "frontline.goap",
+        // Ranged DPS
+        "mage" | "arcanist" | "pyromancer" | "ranger" | "assassin" => "striker.goap",
+        // Support / healer
+        "cleric" | "druid" | "bard" | "shaman" => "medic.goap",
+        // CC / controller
+        "warlock" | "necromancer" => "controller.goap",
+        // Utility / skirmisher
+        "rogue" | "monk" => "skirmisher.goap",
+        // Unknown template: fall back to role
+        _ => match role {
+            Role::Tank => "frontline.goap",
+            Role::Healer => "medic.goap",
+            Role::Dps => "striker.goap",
+        },
+    }
+}
+
+/// Build a GoapAiState by assigning .goap behaviors to hero units.
+/// Uses hero template names when available, falling back to role-based assignment.
+pub fn build_goap_for_heroes(
+    state: &SimState,
+    roles: &HashMap<u32, Role>,
+    game_root: &Path,
+    hero_templates: &[String],
+) -> Option<GoapAiState> {
+    let behaviors_dir = game_root.join("assets").join("behaviors");
+    let mut defs: HashMap<u32, GoapDef> = HashMap::new();
+
+    let heroes: Vec<&bevy_game::ai::core::UnitState> = state
+        .units
+        .iter()
+        .filter(|u| u.team == Team::Hero && u.hp > 0)
+        .collect();
+
+    for (i, unit) in heroes.iter().enumerate() {
+        let role = roles.get(&unit.id).copied().unwrap_or(Role::Dps);
+        let goap_file = if i < hero_templates.len() {
+            goap_file_for_template(&hero_templates[i], role, &behaviors_dir)
+        } else {
+            match role {
+                Role::Tank => "frontline.goap",
+                Role::Healer => "medic.goap",
+                Role::Dps => "striker.goap",
+            }
+        };
+
+        let path = behaviors_dir.join(goap_file);
+        match load_goap_file(path.to_str().unwrap_or("")) {
+            Ok(def) => {
+                let template_name = if i < hero_templates.len() {
+                    &hero_templates[i]
+                } else {
+                    "unknown"
+                };
+                eprintln!("[sim_bridge] GOAP: unit {} ({}) → {}", unit.id, template_name, goap_file);
+                defs.insert(unit.id, def);
+            }
+            Err(e) => {
+                eprintln!("[sim_bridge] GOAP load error for {}: {}", goap_file, e);
+            }
+        }
+    }
+
+    if defs.is_empty() {
+        None
+    } else {
+        Some(GoapAiState::new(defs, None))
     }
 }
 

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archmage_pyromancer_sentinel"
+seed = 24984
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archmage", "pyromancer", "sentinel"]
+enemy_hero_templates = ["archmage", "pyromancer", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

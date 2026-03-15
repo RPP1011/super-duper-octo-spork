@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_buffer_duelist"
+seed = 93748
+hero_count = 2
+enemy_count = 0
+hero_templates = ["buffer", "duelist"]
+enemy_hero_templates = ["buffer", "duelist"]
+max_ticks = 800
+room_type = "Pressure"

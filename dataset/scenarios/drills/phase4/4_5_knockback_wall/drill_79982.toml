@@ -1,0 +1,19 @@
+[scenario]
+name = "drill_4_5_knockback_79982"
+seed = 79982
+hero_count = 1
+enemy_count = 0
+max_ticks = 300
+room_type = "Entry"
+hero_templates = [
+    "monk",
+]
+enemy_hero_templates = []
+drill_type = "knockback"
+action_mask = "all"
+enemy_units = [
+    { behavior = "melee_chaser", template = "brute", hp_override = 600, dps_override = 20.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

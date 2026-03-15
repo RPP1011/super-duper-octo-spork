@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_buffer_shatter_mage"
+seed = 24662
+hero_count = 2
+enemy_count = 0
+hero_templates = ["buffer", "shatter_mage"]
+enemy_hero_templates = ["buffer", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

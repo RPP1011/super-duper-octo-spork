@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_pyromancer_sniper"
+seed = 85751
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "pyromancer", "sniper"]
+enemy_hero_templates = ["amplifier", "pyromancer", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_executioner_templar"
+seed = 23104
+hero_count = 2
+enemy_count = 0
+hero_templates = ["executioner", "templar"]
+enemy_hero_templates = ["executioner", "templar"]
+max_ticks = 800
+room_type = "Pressure"

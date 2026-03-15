@@ -6,6 +6,7 @@ mod conditions;
 mod targeting;
 mod apply_effect;
 mod apply_effect_ext;
+mod summon_templates;
 mod triggers;
 mod damage;
 mod hero;
@@ -14,8 +15,11 @@ mod resolve;
 mod tick_systems;
 mod tick_world;
 mod simulation;
+mod replay;
+mod determinism;
 mod metrics;
 pub mod verify;
+mod verify_checks;
 pub mod oracle;
 pub mod decision_log;
 pub mod dataset;
@@ -24,6 +28,8 @@ pub mod self_play;
 pub mod curriculum;
 pub mod ability_encoding;
 pub mod ability_transformer;
+#[cfg(feature = "stream-monitor")]
+pub mod monitor;
 
 #[cfg(test)]
 mod tests;
@@ -34,8 +40,11 @@ mod tests_stress;
 pub use types::*;
 pub use events::SimEvent;
 pub use simulation::{
-    step, run_replay, ReplayResult,
+    step,
     sample_duel_state, sample_duel_script,
+};
+pub use replay::{run_replay, ReplayResult};
+pub use determinism::{
     verify_determinism, verify_replay_against_hashes,
     DeterminismReport, hash_sim_state,
 };

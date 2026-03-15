@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_scout"
+seed = 92397
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "scout"]
+enemy_hero_templates = ["archer", "scout"]
+max_ticks = 800
+room_type = "Pressure"

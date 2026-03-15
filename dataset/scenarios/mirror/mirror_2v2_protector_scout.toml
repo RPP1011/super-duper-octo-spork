@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_protector_scout"
+seed = 24208
+hero_count = 2
+enemy_count = 0
+hero_templates = ["protector", "scout"]
+enemy_hero_templates = ["protector", "scout"]
+max_ticks = 800
+room_type = "Pressure"

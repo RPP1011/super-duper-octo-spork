@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_deathknight_duelist_healer"
+seed = 49286
+hero_count = 3
+enemy_count = 0
+hero_templates = ["deathknight", "duelist", "healer"]
+enemy_hero_templates = ["deathknight", "duelist", "healer"]
+max_ticks = 800
+room_type = "Pressure"

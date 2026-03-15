@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brawler_plague_doctor"
+seed = 28301
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brawler", "plague_doctor"]
+enemy_hero_templates = ["brawler", "plague_doctor"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_paladin_warden"
+seed = 86056
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "paladin", "warden"]
+enemy_hero_templates = ["bulwark", "paladin", "warden"]
+max_ticks = 800
+room_type = "Pressure"

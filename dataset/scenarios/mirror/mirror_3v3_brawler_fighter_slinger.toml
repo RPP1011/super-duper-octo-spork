@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brawler_fighter_slinger"
+seed = 72018
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brawler", "fighter", "slinger"]
+enemy_hero_templates = ["brawler", "fighter", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

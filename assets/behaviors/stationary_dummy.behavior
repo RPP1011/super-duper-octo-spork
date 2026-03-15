@@ -1,0 +1,3 @@
+behavior "stationary_dummy" {
+  fallback hold
+}

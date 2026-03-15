@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_duelist_skirmisher"
+seed = 53452
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "duelist", "skirmisher"]
+enemy_hero_templates = ["brute", "duelist", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

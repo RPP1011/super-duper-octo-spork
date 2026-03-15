@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_executioner_plague_doctor_priest"
+seed = 84468
+hero_count = 3
+enemy_count = 0
+hero_templates = ["executioner", "plague_doctor", "priest"]
+enemy_hero_templates = ["executioner", "plague_doctor", "priest"]
+max_ticks = 800
+room_type = "Pressure"

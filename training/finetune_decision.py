@@ -126,7 +126,7 @@ class AbilityDecisionDataset:
         has_target = [1.0 if s.get("category", "") in UNIT_TARGET_CATEGORIES and s.get("target_idx", -1) >= 0
                       else 0.0 for s in batch_samples]
 
-        return {
+        result = {
             "input_ids": torch.tensor(ids_list, dtype=torch.long, device=DEVICE),
             "attention_mask": torch.tensor(mask_list, dtype=torch.float, device=DEVICE),
             "game_state": torch.tensor(game_states, dtype=torch.float, device=DEVICE),
@@ -134,6 +134,9 @@ class AbilityDecisionDataset:
             "target_idx": torch.tensor([max(0, t) for t in target_idxs], dtype=torch.long, device=DEVICE),
             "has_target": torch.tensor(has_target, dtype=torch.float, device=DEVICE),
         }
+        assert not torch.isnan(result["game_state"]).any(), "NaN in game_state input data"
+        assert not torch.isnan(result["urgency"]).any(), "NaN in urgency labels"
+        return result
 
     def sample_batch(self, batch_size: int) -> dict[str, torch.Tensor]:
         indices = random.choices(range(len(self.samples)), k=batch_size)

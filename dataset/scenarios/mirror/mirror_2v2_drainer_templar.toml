@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_drainer_templar"
+seed = 75909
+hero_count = 2
+enemy_count = 0
+hero_templates = ["drainer", "templar"]
+enemy_hero_templates = ["drainer", "templar"]
+max_ticks = 800
+room_type = "Pressure"

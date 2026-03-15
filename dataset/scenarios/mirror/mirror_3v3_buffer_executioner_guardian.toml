@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_buffer_executioner_guardian"
+seed = 31955
+hero_count = 3
+enemy_count = 0
+hero_templates = ["buffer", "executioner", "guardian"]
+enemy_hero_templates = ["buffer", "executioner", "guardian"]
+max_ticks = 800
+room_type = "Pressure"

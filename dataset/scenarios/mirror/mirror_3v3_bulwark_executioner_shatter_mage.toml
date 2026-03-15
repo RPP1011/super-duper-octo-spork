@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_executioner_shatter_mage"
+seed = 60409
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "executioner", "shatter_mage"]
+enemy_hero_templates = ["bulwark", "executioner", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

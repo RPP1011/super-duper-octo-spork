@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_duelist_executioner"
+seed = 17455
+hero_count = 2
+enemy_count = 0
+hero_templates = ["duelist", "executioner"]
+enemy_hero_templates = ["duelist", "executioner"]
+max_ticks = 800
+room_type = "Pressure"

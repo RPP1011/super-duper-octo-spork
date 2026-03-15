@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_buffer_plague_doctor_striker"
+seed = 58394
+hero_count = 3
+enemy_count = 0
+hero_templates = ["buffer", "plague_doctor", "striker"]
+enemy_hero_templates = ["buffer", "plague_doctor", "striker"]
+max_ticks = 800
+room_type = "Pressure"

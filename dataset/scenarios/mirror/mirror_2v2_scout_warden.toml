@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_scout_warden"
+seed = 48752
+hero_count = 2
+enemy_count = 0
+hero_templates = ["scout", "warden"]
+enemy_hero_templates = ["scout", "warden"]
+max_ticks = 800
+room_type = "Pressure"

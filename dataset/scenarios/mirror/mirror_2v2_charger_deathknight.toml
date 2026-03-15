@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_deathknight"
+seed = 71993
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "deathknight"]
+enemy_hero_templates = ["charger", "deathknight"]
+max_ticks = 800
+room_type = "Pressure"

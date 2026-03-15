@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_skirmisher_zapper"
+seed = 22240
+hero_count = 2
+enemy_count = 0
+hero_templates = ["skirmisher", "zapper"]
+enemy_hero_templates = ["skirmisher", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

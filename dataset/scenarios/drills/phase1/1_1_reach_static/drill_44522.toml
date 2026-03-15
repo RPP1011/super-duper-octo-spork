@@ -1,0 +1,31 @@
+[scenario]
+name = "drill_1_1_reach_static_44522"
+seed = 44522
+hero_count = 1
+enemy_count = 0
+max_ticks = 200
+room_type = "Entry"
+hero_templates = [
+    "scout",
+]
+hero_positions = [
+    [
+        10.0,
+        10.0,
+    ],
+]
+enemy_hero_templates = []
+drill_type = "reach_point"
+target_position = [
+    17.6,
+    14.2,
+]
+action_mask = "move_only"
+
+[scenario.objective]
+objective_type = "reach_position"
+position = [
+    17.6,
+    14.2,
+]
+radius = 1.0

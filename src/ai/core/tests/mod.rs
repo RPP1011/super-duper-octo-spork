@@ -11,6 +11,7 @@ pub(super) use crate::ai::effects::{
 mod determinism;
 mod mechanics;
 mod abilities;
+mod verify;
 
 pub(super) fn hero_unit(id: u32, team: Team, pos: (f32, f32)) -> UnitState {
     UnitState {

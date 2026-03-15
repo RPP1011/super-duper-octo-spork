@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_plague_doctor_pyromancer_slower"
+seed = 80127
+hero_count = 3
+enemy_count = 0
+hero_templates = ["plague_doctor", "pyromancer", "slower"]
+enemy_hero_templates = ["plague_doctor", "pyromancer", "slower"]
+max_ticks = 800
+room_type = "Pressure"

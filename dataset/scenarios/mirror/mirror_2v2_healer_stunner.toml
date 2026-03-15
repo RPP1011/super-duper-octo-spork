@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_healer_stunner"
+seed = 24663
+hero_count = 2
+enemy_count = 0
+hero_templates = ["healer", "stunner"]
+enemy_hero_templates = ["healer", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

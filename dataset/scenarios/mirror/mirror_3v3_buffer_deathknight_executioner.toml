@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_buffer_deathknight_executioner"
+seed = 69511
+hero_count = 3
+enemy_count = 0
+hero_templates = ["buffer", "deathknight", "executioner"]
+enemy_hero_templates = ["buffer", "deathknight", "executioner"]
+max_ticks = 800
+room_type = "Pressure"

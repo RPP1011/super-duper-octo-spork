@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_caster_priest_protector"
+seed = 87616
+hero_count = 3
+enemy_count = 0
+hero_templates = ["caster", "priest", "protector"]
+enemy_hero_templates = ["caster", "priest", "protector"]
+max_ticks = 800
+room_type = "Pressure"

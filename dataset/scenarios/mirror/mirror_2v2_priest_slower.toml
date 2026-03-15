@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_priest_slower"
+seed = 53404
+hero_count = 2
+enemy_count = 0
+hero_templates = ["priest", "slower"]
+enemy_hero_templates = ["priest", "slower"]
+max_ticks = 800
+room_type = "Pressure"

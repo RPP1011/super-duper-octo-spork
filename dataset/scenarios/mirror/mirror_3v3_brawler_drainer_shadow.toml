@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brawler_drainer_shadow"
+seed = 73792
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brawler", "drainer", "shadow"]
+enemy_hero_templates = ["brawler", "drainer", "shadow"]
+max_ticks = 800
+room_type = "Pressure"

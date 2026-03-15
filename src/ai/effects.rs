@@ -15,3 +15,7 @@ mod tests;
 #[cfg(test)]
 #[path = "effects/tests_extended.rs"]
 mod tests_extended;
+
+#[cfg(test)]
+#[path = "effects/tests_bonus.rs"]
+mod tests_bonus;

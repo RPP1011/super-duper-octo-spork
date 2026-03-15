@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_priest_shatter_mage"
+seed = 52647
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "priest", "shatter_mage"]
+enemy_hero_templates = ["brute", "priest", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

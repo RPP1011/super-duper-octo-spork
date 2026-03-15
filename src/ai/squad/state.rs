@@ -393,7 +393,7 @@ pub(super) fn alive_by_team(state: &SimState, team: Team) -> Vec<u32> {
 // Per-tick context -- precomputed lookups to avoid O(n^2) scans
 // ---------------------------------------------------------------------------
 
-pub(super) struct TickContext {
+pub(crate) struct TickContext {
     /// unit_id -> index in state.units
     index: HashMap<u32, usize>,
     /// alive hero unit IDs (sorted)

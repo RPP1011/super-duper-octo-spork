@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_pyromancer_sentinel_zapper"
+seed = 69372
+hero_count = 3
+enemy_count = 0
+hero_templates = ["pyromancer", "sentinel", "zapper"]
+enemy_hero_templates = ["pyromancer", "sentinel", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

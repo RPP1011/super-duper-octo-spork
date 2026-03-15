@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_brute"
+seed = 38221
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "brute"]
+enemy_hero_templates = ["archer", "brute"]
+max_ticks = 800
+room_type = "Pressure"

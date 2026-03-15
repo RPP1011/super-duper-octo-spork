@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_executioner_plague_doctor_slower"
+seed = 40833
+hero_count = 3
+enemy_count = 0
+hero_templates = ["executioner", "plague_doctor", "slower"]
+enemy_hero_templates = ["executioner", "plague_doctor", "slower"]
+max_ticks = 800
+room_type = "Pressure"

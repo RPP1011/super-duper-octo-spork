@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_executioner_paladin_stunner"
+seed = 32729
+hero_count = 3
+enemy_count = 0
+hero_templates = ["executioner", "paladin", "stunner"]
+enemy_hero_templates = ["executioner", "paladin", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

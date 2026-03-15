@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_skirmisher_sniper"
+seed = 21592
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "skirmisher", "sniper"]
+enemy_hero_templates = ["bulwark", "skirmisher", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

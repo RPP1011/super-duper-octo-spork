@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_charger_slinger"
+seed = 54473
+hero_count = 2
+enemy_count = 0
+hero_templates = ["charger", "slinger"]
+enemy_hero_templates = ["charger", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

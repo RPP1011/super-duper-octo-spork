@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_templar"
+seed = 40021
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "templar"]
+enemy_hero_templates = ["archmage", "templar"]
+max_ticks = 800
+room_type = "Pressure"

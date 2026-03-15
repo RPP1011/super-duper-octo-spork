@@ -1,0 +1,19 @@
+[scenario]
+name = "drill_4_4_cc_burst_20320"
+seed = 20320
+hero_count = 1
+enemy_count = 0
+max_ticks = 400
+room_type = "Entry"
+hero_templates = [
+    "stunner",
+]
+enemy_hero_templates = []
+drill_type = "cc_burst"
+action_mask = "all"
+enemy_units = [
+    { behavior = "melee_chaser", template = "brute", hp_override = 800, dps_override = 10.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

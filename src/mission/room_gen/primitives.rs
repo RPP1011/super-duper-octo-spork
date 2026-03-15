@@ -6,6 +6,7 @@ use super::nav::NavGrid;
 // ---------------------------------------------------------------------------
 
 /// Place a linear wall segment with an optional gap; forces flanking.
+/// When `gap` is 0, the LCG introduces a variable gap of 1-3 cells for variety.
 pub(crate) fn place_wall_segment(
     nav: &mut NavGrid,
     rng: &mut Lcg,
@@ -20,16 +21,18 @@ pub(crate) fn place_wall_segment(
     if length == 0 {
         return regions;
     }
-    let gap_start = if gap > 0 && length > gap + 2 {
-        rng.next_usize_range(1, length - gap - 1)
-    } else if gap > 0 {
+    // Variable gap width: use provided gap or randomize 1-3 cells
+    let effective_gap = if gap > 0 { gap } else { rng.next_usize_range(1, 3) };
+    let gap_start = if effective_gap > 0 && length > effective_gap + 2 {
+        rng.next_usize_range(1, length - effective_gap - 1)
+    } else if effective_gap > 0 {
         length // gap too large -- skip it
     } else {
         length // no gap requested
     };
 
     for i in 0..length {
-        if i >= gap_start && i < gap_start + gap {
+        if i >= gap_start && i < gap_start + effective_gap {
             continue;
         }
         let (c, r) = if horizontal {
@@ -53,6 +56,8 @@ pub(crate) fn place_wall_segment(
 }
 
 /// Place evenly spaced pillars in a rectangular region; breaks sightlines.
+/// Spacing is jittered by the LCG within a range of [spacing-1, spacing+1]
+/// (clamped to pillar_size+1 minimum) for organic variety.
 pub(crate) fn place_pillar_grid(
     nav: &mut NavGrid,
     _rng: &mut Lcg,
@@ -65,7 +70,15 @@ pub(crate) fn place_pillar_grid(
     height: f32,
 ) -> Vec<ObstacleRegion> {
     let mut regions = Vec::new();
-    let sp = spacing.max(pillar_size + 1);
+    // Variable spacing: jitter by +/-1 from requested spacing (2-4 cell range)
+    let jittered_spacing = if spacing >= 2 {
+        let lo = spacing - 1;
+        let hi = spacing + 1;
+        _rng.next_usize_range(lo, hi)
+    } else {
+        spacing
+    };
+    let sp = jittered_spacing.max(pillar_size + 1);
     let ps = pillar_size.max(1);
     let mut c = col0;
     while c + ps - 1 <= col1 && c + ps - 1 < nav.cols.saturating_sub(1) {
@@ -91,6 +104,8 @@ pub(crate) fn place_pillar_grid(
 }
 
 /// Place an L-shaped cover block; asymmetric defender advantage.
+/// Arm length is jittered by the LCG within [arm_len-1, arm_len+1] (clamped to 2-4)
+/// for organic variety.
 pub(crate) fn place_l_shape(
     nav: &mut NavGrid,
     _rng: &mut Lcg,
@@ -103,7 +118,15 @@ pub(crate) fn place_l_shape(
 ) -> Vec<ObstacleRegion> {
     let mut regions = Vec::new();
     let t = thickness.max(1);
-    let a = arm_len.max(2);
+    // Variable arm length: jitter within [arm_len-1, arm_len+1], clamped to 2-4
+    let jittered_arm = if arm_len >= 2 {
+        let lo = (arm_len - 1).max(2);
+        let hi = (arm_len + 1).min(4);
+        _rng.next_usize_range(lo, hi)
+    } else {
+        arm_len
+    };
+    let a = jittered_arm.max(2);
 
     // orientation: 0=right-down, 1=left-down, 2=left-up, 3=right-up
     let (hc0, hc1, hr0, hr1) = match orientation {

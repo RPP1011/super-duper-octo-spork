@@ -51,19 +51,19 @@ fn scenario_matrix_hash_regression_snapshot() {
 
     assert_eq!(
         map.get("phase2_seed17"),
-        Some(&(0x0122_c661_c895_0a47, 0xd403_2cbd_c589_780e))
+        Some(&(0xa192_946a_101d_8b9b, 0x688c_7967_a1d2_b856))
     );
     assert_eq!(
         map.get("phase3_seed23"),
-        Some(&(0x08ad_4478_343f_050f, 0x5c66_2925_360a_49a1))
+        Some(&(0x0c61_dec7_078a_ad8e, 0xafb2_7256_0a79_da9f))
     );
     assert_eq!(
         map.get("phase4_seed29"),
-        Some(&(0xa27a_1183_d869_1ddd, 0x86ee_da84_10ec_becd))
+        Some(&(0x21a7_b000_cc46_c8b2, 0x376e_9b1e_458d_c9f1))
     );
     assert_eq!(
         map.get("phase5_seed31"),
-        Some(&(0x8d03_5a97_0ee4_d0d0, 0x5f4d_5cfd_8a52_119e))
+        Some(&(0x2df8_c3e7_3dbd_7c93, 0x2fab_b081_1b37_917f))
     );
 }
 

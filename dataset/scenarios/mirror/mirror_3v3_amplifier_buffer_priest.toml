@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_amplifier_buffer_priest"
+seed = 41031
+hero_count = 3
+enemy_count = 0
+hero_templates = ["amplifier", "buffer", "priest"]
+enemy_hero_templates = ["amplifier", "buffer", "priest"]
+max_ticks = 800
+room_type = "Pressure"

@@ -21,6 +21,10 @@ pub struct GridNav {
     pub wall_proximity_by_cell: HashMap<(i32, i32), f32>,
     /// Precomputed per-cell: number of blocked cardinal neighbors (0-4).
     pub chokepoint_score_by_cell: HashMap<(i32, i32), u8>,
+    /// True when the interior has zero blocked cells (e.g. Open room type).
+    /// Enables fast paths that skip per-cell iteration in pathfinding, LOS,
+    /// and position token extraction.
+    pub fully_open: bool,
 }
 
 impl GridNav {
@@ -36,6 +40,7 @@ impl GridNav {
             slope_cost_by_cell: HashMap::new(),
             wall_proximity_by_cell: HashMap::new(),
             chokepoint_score_by_cell: HashMap::new(),
+            fully_open: false,
         }
     }
 
@@ -148,6 +153,11 @@ impl GridNav {
     }
 
     pub fn is_walkable_pos(&self, pos: SimVec2) -> bool {
+        if self.fully_open {
+            // Only check perimeter bounds — no interior obstacles exist.
+            return pos.x >= self.min_x && pos.x <= self.max_x
+                && pos.y >= self.min_y && pos.y <= self.max_y;
+        }
         let c = self.cell_of(pos);
         self.walkable(c.0, c.1)
     }
@@ -155,6 +165,18 @@ impl GridNav {
     /// Precompute wall proximity and chokepoint scores for all walkable cells.
     /// Call once after terrain is finalized (all blocks/carves done).
     pub fn precompute_wall_proximity(&mut self) {
+        // Detect fully-open rooms: no interior blocked cells at all.
+        self.fully_open = self.blocked.is_empty();
+
+        // For fully_open rooms, skip per-cell iteration entirely.
+        // wall_proximity defaults to 5.0 and chokepoint defaults to 0 via
+        // the accessor methods, which is correct for open rooms.
+        if self.fully_open {
+            self.wall_proximity_by_cell.clear();
+            self.chokepoint_score_by_cell.clear();
+            return;
+        }
+
         let cx0 = ((self.min_x) / self.cell_size).floor() as i32;
         let cx1 = ((self.max_x) / self.cell_size).ceil() as i32;
         let cy0 = ((self.min_y) / self.cell_size).floor() as i32;
@@ -206,6 +228,47 @@ impl GridNav {
     /// Get precomputed chokepoint score for a position (falls back to 0 if not precomputed).
     pub fn chokepoint_at_pos(&self, pos: SimVec2) -> u8 {
         self.chokepoint_score_by_cell.get(&self.cell_of(pos)).copied().unwrap_or(0)
+    }
+
+    /// Returns true if a straight line between two positions passes only
+    /// through walkable cells.  When `fully_open` is true this is an O(1)
+    /// bounds check instead of per-cell Bresenham iteration.
+    pub fn is_convex_open(&self, pos_a: SimVec2, pos_b: SimVec2) -> bool {
+        if self.fully_open {
+            // No interior obstacles — just confirm both endpoints are in bounds.
+            return pos_a.x >= self.min_x && pos_a.x <= self.max_x
+                && pos_a.y >= self.min_y && pos_a.y <= self.max_y
+                && pos_b.x >= self.min_x && pos_b.x <= self.max_x
+                && pos_b.y >= self.min_y && pos_b.y <= self.max_y;
+        }
+        // Fall back to Bresenham line check through the blocked set.
+        let from = self.cell_of(pos_a);
+        let to = self.cell_of(pos_b);
+        let dx = (to.0 - from.0).abs();
+        let dy = (to.1 - from.1).abs();
+        let sx = if from.0 < to.0 { 1 } else { -1 };
+        let sy = if from.1 < to.1 { 1 } else { -1 };
+        let mut err = dx - dy;
+        let mut x = from.0;
+        let mut y = from.1;
+        loop {
+            if self.blocked.contains(&(x, y)) {
+                return false;
+            }
+            if x == to.0 && y == to.1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 > -dy {
+                err -= dy;
+                x += sx;
+            }
+            if e2 < dx {
+                err += dx;
+                y += sy;
+            }
+        }
+        true
     }
 
     /// Returns all grid cells covered by a rectangle centered at `center`

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_drainer_stunner"
+seed = 72493
+hero_count = 2
+enemy_count = 0
+hero_templates = ["drainer", "stunner"]
+enemy_hero_templates = ["drainer", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

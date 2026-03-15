@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_slower"
+seed = 48469
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "slower"]
+enemy_hero_templates = ["brute", "slower"]
+max_ticks = 800
+room_type = "Pressure"

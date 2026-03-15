@@ -1,3 +1,4 @@
+use contracts::*;
 use crate::ai::effects::{
     AbilityTarget, ConditionalEffect, DamageType, Effect, StatusKind, Trigger,
 };
@@ -5,7 +6,7 @@ use crate::ai::effects::{
 use super::types::*;
 use super::events::SimEvent;
 use super::math::distance;
-use super::helpers::{find_unit_idx, is_alive, next_rand_u32};
+use super::helpers::{clear_dead_unit_state, find_unit_idx, is_alive, next_rand_u32};
 use super::triggers::{check_passive_triggers, fire_damage_triggers};
 use super::conditions::evaluate_condition_tracked;
 use super::apply_effect::apply_effect;
@@ -22,6 +23,8 @@ pub fn apply_damage_to_unit(
     apply_typed_damage(source_idx, target_id, base_amount, DamageType::Physical, tick, state, events);
 }
 
+#[requires(base_amount >= 0)]
+#[requires(source_idx < state.units.len())]
 pub fn apply_typed_damage(
     source_idx: usize,
     target_id: u32,
@@ -164,6 +167,7 @@ pub fn apply_typed_damage(
                     amount: damage, target_hp_before: current_hp, target_hp_after: new_hp,
                 });
                 if new_hp == 0 {
+                    clear_dead_unit_state(&mut state.units[p_idx]);
                     events.push(SimEvent::UnitDied { tick, unit_id: protector_id });
                 }
                 return;
@@ -217,6 +221,7 @@ pub fn apply_typed_damage(
             amount: reflect_damage,
         });
         if state.units[source_idx].hp == 0 {
+            clear_dead_unit_state(&mut state.units[source_idx]);
             events.push(SimEvent::UnitDied { tick, unit_id: state.units[source_idx].id });
         }
     }
@@ -269,6 +274,7 @@ pub fn apply_typed_damage(
                             target_hp_before: p_hp, target_hp_after: state.units[p_idx].hp,
                         });
                         if state.units[p_idx].hp == 0 {
+                            clear_dead_unit_state(&mut state.units[p_idx]);
                             events.push(SimEvent::UnitDied { tick, unit_id: partner_id });
                         }
                         state.passive_trigger_depth -= 1;
@@ -279,6 +285,7 @@ pub fn apply_typed_damage(
     }
 
     if new_hp == 0 {
+        clear_dead_unit_state(&mut state.units[target_idx]);
         events.push(SimEvent::UnitDied { tick, unit_id: target_id });
     }
 
@@ -286,6 +293,7 @@ pub fn apply_typed_damage(
     fire_damage_triggers(source_idx, target_idx, target_id, new_hp, shield_broke, tick, state, events);
 }
 
+#[requires(base_amount >= 0)]
 pub fn apply_heal_to_unit(
     source_idx: usize,
     target_id: u32,

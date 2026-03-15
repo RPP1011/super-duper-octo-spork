@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_healer_plague_doctor"
+seed = 46265
+hero_count = 2
+enemy_count = 0
+hero_templates = ["healer", "plague_doctor"]
+enemy_hero_templates = ["healer", "plague_doctor"]
+max_ticks = 800
+room_type = "Pressure"

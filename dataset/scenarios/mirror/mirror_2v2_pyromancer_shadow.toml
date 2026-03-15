@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_pyromancer_shadow"
+seed = 10221
+hero_count = 2
+enemy_count = 0
+hero_templates = ["pyromancer", "shadow"]
+enemy_hero_templates = ["pyromancer", "shadow"]
+max_ticks = 800
+room_type = "Pressure"

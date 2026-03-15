@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_fighter_healer"
+seed = 76307
+hero_count = 2
+enemy_count = 0
+hero_templates = ["fighter", "healer"]
+enemy_hero_templates = ["fighter", "healer"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brawler_charger_scout"
+seed = 52914
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brawler", "charger", "scout"]
+enemy_hero_templates = ["brawler", "charger", "scout"]
+max_ticks = 800
+room_type = "Pressure"

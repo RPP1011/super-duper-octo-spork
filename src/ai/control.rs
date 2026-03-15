@@ -4,6 +4,7 @@ use crate::ai::core::{
     distance, move_towards, position_at_range, run_replay, step, IntentAction, ReplayResult,
     SimEvent, SimState, Team, UnitIntent,
 };
+use crate::ai::goap::GoapAiState;
 use crate::ai::roles::{default_roles, Role};
 use crate::ai::squad::{generate_intents as phase3_generate_intents, SquadAiState};
 
@@ -44,6 +45,8 @@ pub struct ControlAiState {
     last_control_end: HashMap<u32, u64>,
     pending_cc_cast_by_source: HashMap<u32, u32>,
     control_windows: Vec<CcWindow>,
+    /// Optional GOAP AI for units with GOAP definitions. Non-GOAP units fall through to squad AI.
+    goap: Option<GoapAiState>,
 }
 
 impl ControlAiState {
@@ -62,7 +65,24 @@ impl ControlAiState {
             last_control_end: HashMap::new(),
             pending_cc_cast_by_source: HashMap::new(),
             control_windows: Vec::new(),
+            goap: None,
         }
+    }
+
+    /// Create with GOAP AI for specified units. Non-GOAP units use squad AI fallback.
+    pub fn new_with_goap(
+        initial: &SimState,
+        roles: HashMap<u32, Role>,
+        goap: GoapAiState,
+    ) -> Self {
+        let mut ai = Self::new(initial, roles);
+        ai.goap = Some(goap);
+        ai
+    }
+
+    /// Get a mutable reference to the GOAP state, if present.
+    pub fn goap_mut(&mut self) -> Option<&mut GoapAiState> {
+        self.goap.as_mut()
     }
 
     pub fn update_from_events(&mut self, state_tick: u64, events: &[SimEvent]) {
@@ -141,7 +161,30 @@ impl ControlAiState {
         let now = state.tick;
         update_reservations(state, self, now);
 
-        let mut intents = phase3_generate_intents(state, &mut self.phase3, dt_ms);
+        let mut intents = if let Some(goap) = &mut self.goap {
+            // Read focus targets from squad blackboards for GOAP coordination
+            let mut focus_targets = HashMap::new();
+            for team in [Team::Hero, Team::Enemy] {
+                let focus = self.phase3.blackboard_for_team(team)
+                    .and_then(|b| b.focus_target);
+                focus_targets.insert(team, focus);
+            }
+
+            // GOAP units get their intents from GOAP; non-GOAP units from squad AI
+            let goap_intents = goap.generate_intents(state, dt_ms, &focus_targets);
+            let goap_unit_ids: HashSet<u32> = goap_intents.iter().map(|i| i.unit_id).collect();
+
+            let mut squad_intents = phase3_generate_intents(state, &mut self.phase3, dt_ms);
+            // Remove squad intents for GOAP-managed units
+            squad_intents.retain(|i| !goap_unit_ids.contains(&i.unit_id));
+
+            let mut combined = goap_intents;
+            combined.extend(squad_intents);
+            combined
+        } else {
+            phase3_generate_intents(state, &mut self.phase3, dt_ms)
+        };
+
         apply_reservation_overrides(state, self, now, dt_ms, &mut intents);
 
         let reservations = self.reservations.values().copied().collect();
@@ -485,8 +528,8 @@ mod tests {
     #[test]
     fn phase4_regression_snapshot() {
         let run = run_phase4_with_seed(29);
-        assert_eq!(run.replay.event_log_hash, 0xa27a_1183_d869_1ddd);
-        assert_eq!(run.replay.final_state_hash, 0x86ee_da84_10ec_becd);
+        assert_eq!(run.replay.event_log_hash, 0x21a7_b000_cc46_c8b2);
+        assert_eq!(run.replay.final_state_hash, 0x376e_9b1e_458d_c9f1);
         assert_eq!(run.replay.metrics.winner, Some(Team::Hero));
         assert_eq!(
             run.replay.metrics.final_hp_by_unit,

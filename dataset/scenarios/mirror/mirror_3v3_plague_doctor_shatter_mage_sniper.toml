@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_plague_doctor_shatter_mage_sniper"
+seed = 71455
+hero_count = 3
+enemy_count = 0
+hero_templates = ["plague_doctor", "shatter_mage", "sniper"]
+enemy_hero_templates = ["plague_doctor", "shatter_mage", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

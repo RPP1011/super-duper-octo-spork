@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_duelist_fighter_plague_doctor"
+seed = 71925
+hero_count = 3
+enemy_count = 0
+hero_templates = ["duelist", "fighter", "plague_doctor"]
+enemy_hero_templates = ["duelist", "fighter", "plague_doctor"]
+max_ticks = 800
+room_type = "Pressure"

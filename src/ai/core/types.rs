@@ -1,3 +1,4 @@
+use contracts::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -102,6 +103,76 @@ pub struct CastState {
     pub target_pos: Option<SimVec2>,
     pub remaining_ms: u32,
     pub kind: CastKind,
+    /// Area of effect shape. Populated from AbilityDef at cast start for hero abilities.
+    #[serde(default)]
+    pub area: Option<crate::ai::effects::Area>,
+    /// Ability index in the caster's ability list (for HeroAbility casts).
+    #[serde(default)]
+    pub ability_index: Option<usize>,
+    /// Simplified effect category for AI spatial awareness.
+    #[serde(default)]
+    pub effect_hint: CastEffectHint,
+}
+
+/// What a cast will do when it completes. Derived from ability effects at cast start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CastEffectHint {
+    #[default]
+    Unknown,
+    Damage,
+    Heal,
+    CrowdControl,
+    Obstacle,
+    Buff,
+    Summon,
+    Mixed,
+}
+
+impl CastEffectHint {
+    /// Classify an ability's effects into a hint category.
+    pub fn from_ability_def(def: &crate::ai::effects::AbilityDef) -> Self {
+        let mut has_damage = false;
+        let mut has_heal = false;
+        let mut has_cc = false;
+        let mut has_obstacle = false;
+        let mut has_buff = false;
+        let mut has_summon = false;
+
+        for ce in &def.effects {
+            match &ce.effect {
+                crate::ai::effects::Effect::Damage { .. } => has_damage = true,
+                crate::ai::effects::Effect::Heal { .. } => has_heal = true,
+                crate::ai::effects::Effect::Stun { .. }
+                | crate::ai::effects::Effect::Slow { .. }
+                | crate::ai::effects::Effect::Root { .. }
+                | crate::ai::effects::Effect::Knockback { .. }
+                | crate::ai::effects::Effect::Pull { .. }
+                | crate::ai::effects::Effect::Silence { .. }
+                | crate::ai::effects::Effect::Polymorph { .. }
+                | crate::ai::effects::Effect::Fear { .. }
+                | crate::ai::effects::Effect::Grounded { .. }
+                | crate::ai::effects::Effect::Suppress { .. } => has_cc = true,
+                crate::ai::effects::Effect::Obstacle { .. } => has_obstacle = true,
+                crate::ai::effects::Effect::Shield { .. }
+                | crate::ai::effects::Effect::Buff { .. }
+                | crate::ai::effects::Effect::Stealth { .. } => has_buff = true,
+                crate::ai::effects::Effect::Summon { .. } => has_summon = true,
+                _ => {}
+            }
+        }
+
+        let categories = [has_damage, has_heal, has_cc, has_obstacle, has_buff, has_summon];
+        let count = categories.iter().filter(|&&b| b).count();
+
+        if count > 1 { return CastEffectHint::Mixed; }
+        if has_obstacle { return CastEffectHint::Obstacle; }
+        if has_damage { return CastEffectHint::Damage; }
+        if has_heal { return CastEffectHint::Heal; }
+        if has_cc { return CastEffectHint::CrowdControl; }
+        if has_buff { return CastEffectHint::Buff; }
+        if has_summon { return CastEffectHint::Summon; }
+        CastEffectHint::Unknown
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +244,10 @@ pub struct SimState {
     #[serde(skip, default)]
     pub grid_nav: Option<crate::ai::pathing::GridNav>,
 }
+
+#[invariant(self.units.iter().all(|u| u.hp <= u.max_hp))]
+#[invariant(self.units.iter().all(|u| u.position.x.is_finite()))]
+impl SimState {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum IntentAction {

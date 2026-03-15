@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archmage_drainer_striker"
+seed = 27985
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archmage", "drainer", "striker"]
+enemy_hero_templates = ["archmage", "drainer", "striker"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slower_stunner"
+seed = 72277
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slower", "stunner"]
+enemy_hero_templates = ["slower", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,21 @@
+[scenario]
+name = "drill_2_3_dodge_aoe_43294"
+seed = 43294
+hero_count = 1
+enemy_count = 0
+max_ticks = 500
+room_type = "Entry"
+hero_templates = [
+    "scout",
+]
+enemy_hero_templates = []
+drill_type = "dodge_abilities"
+action_mask = "move_only"
+enemy_units = [
+    { behavior = "aoe_caster", template = "mage", hp_override = 9999, dps_override = 0.0 },
+]
+
+[scenario.objective]
+objective_type = "survive"
+duration = 500
+max_damage_taken = 0.0

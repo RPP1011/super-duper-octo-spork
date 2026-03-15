@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_healer_striker_zapper"
+seed = 88128
+hero_count = 3
+enemy_count = 0
+hero_templates = ["healer", "striker", "zapper"]
+enemy_hero_templates = ["healer", "striker", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

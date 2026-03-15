@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brute_paladin_sentinel"
+seed = 88333
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brute", "paladin", "sentinel"]
+enemy_hero_templates = ["brute", "paladin", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

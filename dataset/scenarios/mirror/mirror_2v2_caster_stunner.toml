@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_stunner"
+seed = 84847
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "stunner"]
+enemy_hero_templates = ["caster", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

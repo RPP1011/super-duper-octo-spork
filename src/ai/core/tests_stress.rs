@@ -3,7 +3,7 @@ mod tests_stress {
     use std::collections::HashMap;
     use std::collections::VecDeque;
     use crate::ai::core::*;
-    use crate::ai::core::simulation::hash_sim_state;
+    use crate::ai::core::determinism::hash_sim_state;
     use crate::ai::effects::{
         AbilityDef, AbilityTargeting, ConditionalEffect, DamageType, Effect,
         AbilitySlot, PassiveSlot, StatusKind, Stacking,

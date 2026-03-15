@@ -1,0 +1,37 @@
+[scenario]
+name = "drill_4_6_aoe_53277"
+seed = 53277
+hero_count = 1
+enemy_count = 0
+max_ticks = 300
+room_type = "Entry"
+hero_templates = [
+    "elementalist",
+]
+enemy_hero_templates = []
+drill_type = "aoe_position"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 300
+dps_override = 5.0
+tag = "cluster_0"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 300
+dps_override = 5.0
+tag = "cluster_1"
+
+[[scenario.enemy_units]]
+behavior = "stationary_dummy"
+template = "brute"
+hp_override = 300
+dps_override = 5.0
+tag = "cluster_2"
+
+[scenario.objective]
+objective_type = "kill_all"

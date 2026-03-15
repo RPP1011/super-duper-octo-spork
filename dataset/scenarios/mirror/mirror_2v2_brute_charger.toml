@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_charger"
+seed = 99192
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "charger"]
+enemy_hero_templates = ["brute", "charger"]
+max_ticks = 800
+room_type = "Pressure"

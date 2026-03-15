@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_medic_skirmisher_warden"
+seed = 78597
+hero_count = 3
+enemy_count = 0
+hero_templates = ["medic", "skirmisher", "warden"]
+enemy_hero_templates = ["medic", "skirmisher", "warden"]
+max_ticks = 800
+room_type = "Pressure"

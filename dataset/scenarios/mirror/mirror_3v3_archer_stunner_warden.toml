@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archer_stunner_warden"
+seed = 14963
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archer", "stunner", "warden"]
+enemy_hero_templates = ["archer", "stunner", "warden"]
+max_ticks = 800
+room_type = "Pressure"

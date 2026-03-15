@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_sentinel"
+seed = 70589
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "sentinel"]
+enemy_hero_templates = ["archmage", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

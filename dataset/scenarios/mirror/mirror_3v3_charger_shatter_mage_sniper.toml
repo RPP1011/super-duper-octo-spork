@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_charger_shatter_mage_sniper"
+seed = 37684
+hero_count = 3
+enemy_count = 0
+hero_templates = ["charger", "shatter_mage", "sniper"]
+enemy_hero_templates = ["charger", "shatter_mage", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

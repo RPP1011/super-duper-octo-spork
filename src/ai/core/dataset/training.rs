@@ -202,7 +202,9 @@ pub fn write_combat_dataset(samples: &[CombatTrainingSample], path: &Path) -> st
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     for s in samples {
-        let line = serde_json::to_string(s).unwrap();
+        let line = serde_json::to_string(s)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize sample at tick {}: {e}", s.tick)))?;
         writeln!(writer, "{}", line)?;
     }
     writer.flush()?;
@@ -214,7 +216,9 @@ pub fn write_dataset(samples: &[TrainingSample], path: &Path) -> std::io::Result
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     for s in samples {
-        let line = serde_json::to_string(s).unwrap();
+        let line = serde_json::to_string(s)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize sample at tick {}: {e}", s.tick)))?;
         writeln!(writer, "{}", line)?;
     }
     writer.flush()?;
@@ -320,7 +324,9 @@ pub fn write_raw_dataset(samples: &[RawTrainingSample], path: &Path) -> std::io:
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     for s in samples {
-        let line = serde_json::to_string(s).unwrap();
+        let line = serde_json::to_string(s)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize sample at tick {}: {e}", s.tick)))?;
         writeln!(writer, "{}", line)?;
     }
     writer.flush()?;

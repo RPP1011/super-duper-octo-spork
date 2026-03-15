@@ -1,4 +1,4 @@
-mod abilities;
+pub(crate) mod abilities;
 mod healer;
 mod targeting;
 

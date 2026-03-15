@@ -1,0 +1,24 @@
+[scenario]
+name = "drill_4_2_cc_enemy_95145"
+seed = 95145
+hero_count = 2
+enemy_count = 0
+max_ticks = 200
+room_type = "Entry"
+hero_templates = [
+    "stunner",
+    "archer",
+]
+enemy_hero_templates = []
+drill_type = "cc_target"
+action_mask = "all"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "brute"
+hp_override = 500
+dps_override = 25.0
+target_preference = "ally"
+
+[scenario.objective]
+objective_type = "kill_all"

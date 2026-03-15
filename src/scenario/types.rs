@@ -27,6 +27,90 @@ pub struct ScenarioCfg {
     /// Optional path to an ability manifest TOML for resolving ability_refs in hero templates.
     #[serde(default)]
     pub manifest_path: Option<String>,
+
+    // ── Drill-specific fields ──
+    /// Drill type identifier (e.g., "reach_point", "kite_enemy", "kill_healer")
+    #[serde(default)]
+    pub drill_type: Option<String>,
+    /// Target position for movement drills [x, y]
+    #[serde(default)]
+    pub target_position: Option<[f32; 2]>,
+    /// Custom enemy unit definitions (behavior + stats overrides)
+    #[serde(default)]
+    pub enemy_units: Vec<EnemyUnitDef>,
+    /// Static hazard zones
+    #[serde(default)]
+    pub hazards: Vec<HazardDef>,
+    /// Drill objective
+    #[serde(default)]
+    pub objective: Option<ObjectiveDef>,
+    /// Which action heads are enabled ("move_only", "move_attack", "all")
+    #[serde(default)]
+    pub action_mask: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EnemyUnitDef {
+    /// Hero template to use for this enemy's abilities/stats
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Behavior DSL file name (assets/behaviors/*.behavior)
+    #[serde(default)]
+    pub behavior: Option<String>,
+    /// Named tag for behavior targeting (e.g., "healer", "tank")
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Override spawn position
+    #[serde(default)]
+    pub position: Option<[f32; 2]>,
+    /// Override HP
+    #[serde(default)]
+    pub hp_override: Option<i32>,
+    /// Override auto-attack DPS
+    #[serde(default)]
+    pub dps_override: Option<f32>,
+    /// Override attack range
+    #[serde(default)]
+    pub range_override: Option<f32>,
+    /// Override move speed (units/sec)
+    #[serde(default)]
+    pub move_speed_override: Option<f32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HazardDef {
+    /// "damage_zone", "slow_zone", "heal_zone"
+    pub hazard_type: String,
+    pub position: [f32; 2],
+    pub radius: f32,
+    #[serde(default)]
+    pub damage_per_tick: f32,
+    /// "neutral", "hero", "enemy"
+    #[serde(default = "default_hazard_team")]
+    pub team: String,
+    #[serde(default)]
+    pub start_tick: u64,
+    /// None = permanent
+    #[serde(default)]
+    pub duration: Option<u64>,
+}
+
+fn default_hazard_team() -> String { "neutral".to_string() }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObjectiveDef {
+    /// "reach_position", "survive", "kill_all", "kill_target", "protect_ally"
+    pub objective_type: String,
+    #[serde(default)]
+    pub position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub radius: Option<f32>,
+    #[serde(default)]
+    pub duration: Option<u64>,
+    #[serde(default)]
+    pub target_tag: Option<String>,
+    #[serde(default)]
+    pub max_damage_taken: Option<f32>,
 }
 
 fn default_hp_multiplier() -> f32 {

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_protector_sentinel_striker"
+seed = 73342
+hero_count = 3
+enemy_count = 0
+hero_templates = ["protector", "sentinel", "striker"]
+enemy_hero_templates = ["protector", "sentinel", "striker"]
+max_ticks = 800
+room_type = "Pressure"

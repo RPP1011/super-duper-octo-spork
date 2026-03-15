@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_scout"
+seed = 19287
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "scout"]
+enemy_hero_templates = ["caster", "scout"]
+max_ticks = 800
+room_type = "Pressure"

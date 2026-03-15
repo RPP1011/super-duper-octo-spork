@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_charger_plague_doctor_slower"
+seed = 67041
+hero_count = 3
+enemy_count = 0
+hero_templates = ["charger", "plague_doctor", "slower"]
+enemy_hero_templates = ["charger", "plague_doctor", "slower"]
+max_ticks = 800
+room_type = "Pressure"

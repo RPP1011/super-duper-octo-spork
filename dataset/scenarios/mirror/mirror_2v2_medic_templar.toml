@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_medic_templar"
+seed = 97416
+hero_count = 2
+enemy_count = 0
+hero_templates = ["medic", "templar"]
+enemy_hero_templates = ["medic", "templar"]
+max_ticks = 800
+room_type = "Pressure"

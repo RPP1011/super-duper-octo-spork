@@ -1,0 +1,38 @@
+[scenario]
+name = "drill_3_8_multi_threat_82255"
+seed = 82255
+hero_count = 2
+enemy_count = 0
+max_ticks = 800
+room_type = "Entry"
+hero_templates = [
+    "archer",
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "multi_threat"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "healer_bot"
+template = "cleric"
+hp_override = 400
+dps_override = 5.0
+tag = "healer"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "berserker"
+hp_override = 600
+dps_override = 30.0
+tag = "dps"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "knight"
+hp_override = 1200
+dps_override = 10.0
+tag = "tank"
+
+[scenario.objective]
+objective_type = "kill_all"

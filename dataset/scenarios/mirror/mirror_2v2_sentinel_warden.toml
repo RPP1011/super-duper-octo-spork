@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_sentinel_warden"
+seed = 49446
+hero_count = 2
+enemy_count = 0
+hero_templates = ["sentinel", "warden"]
+enemy_hero_templates = ["sentinel", "warden"]
+max_ticks = 800
+room_type = "Pressure"

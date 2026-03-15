@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_buffer_scout"
+seed = 52487
+hero_count = 2
+enemy_count = 0
+hero_templates = ["buffer", "scout"]
+enemy_hero_templates = ["buffer", "scout"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,21 @@
+[scenario]
+name = "drill_5_1_focus_81865"
+seed = 81865
+hero_count = 2
+enemy_count = 0
+max_ticks = 400
+room_type = "Entry"
+hero_templates = [
+    "archer",
+    "duelist",
+]
+enemy_hero_templates = []
+drill_type = "focus_fire"
+action_mask = "all"
+enemy_units = [
+    { behavior = "melee_chaser", template = "brute", hp_override = 600, dps_override = 15.0 },
+    { behavior = "melee_chaser", template = "brute", hp_override = 600, dps_override = 15.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

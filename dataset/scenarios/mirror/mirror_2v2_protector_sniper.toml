@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_protector_sniper"
+seed = 77033
+hero_count = 2
+enemy_count = 0
+hero_templates = ["protector", "sniper"]
+enemy_hero_templates = ["protector", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_bulwark_duelist_zapper"
+seed = 46624
+hero_count = 3
+enemy_count = 0
+hero_templates = ["bulwark", "duelist", "zapper"]
+enemy_hero_templates = ["bulwark", "duelist", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

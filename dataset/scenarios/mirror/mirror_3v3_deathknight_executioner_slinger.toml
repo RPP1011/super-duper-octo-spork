@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_deathknight_executioner_slinger"
+seed = 89242
+hero_count = 3
+enemy_count = 0
+hero_templates = ["deathknight", "executioner", "slinger"]
+enemy_hero_templates = ["deathknight", "executioner", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

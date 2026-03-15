@@ -1,0 +1,20 @@
+[scenario]
+name = "drill_5_2_chain_cc_37384"
+seed = 37384
+hero_count = 2
+enemy_count = 0
+max_ticks = 800
+room_type = "Entry"
+hero_templates = [
+    "stunner",
+    "monk",
+]
+enemy_hero_templates = []
+drill_type = "chain_cc"
+action_mask = "all"
+enemy_units = [
+    { behavior = "melee_chaser", template = "berserker", hp_override = 1500, dps_override = 40.0 },
+]
+
+[scenario.objective]
+objective_type = "kill_all"

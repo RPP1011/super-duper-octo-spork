@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_zapper"
+seed = 51347
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "zapper"]
+enemy_hero_templates = ["archmage", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

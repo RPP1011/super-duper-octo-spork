@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_executioner_slinger"
+seed = 19508
+hero_count = 2
+enemy_count = 0
+hero_templates = ["executioner", "slinger"]
+enemy_hero_templates = ["executioner", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

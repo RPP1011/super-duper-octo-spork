@@ -1,0 +1,34 @@
+[scenario]
+name = "drill_1_2_reach_moving_74919"
+seed = 74919
+hero_count = 1
+enemy_count = 0
+max_ticks = 400
+room_type = "Entry"
+hero_templates = [
+    "scout",
+]
+hero_positions = [
+    [
+        10.0,
+        10.0,
+    ],
+]
+enemy_hero_templates = []
+drill_type = "reach_moving"
+action_mask = "move_only"
+
+[[scenario.enemy_units]]
+behavior = "fleeing_target"
+template = "scout"
+hp_override = 9999
+dps_override = 0.0
+move_speed_override = 2.5
+position = [
+    14.7,
+    4.2,
+]
+
+[scenario.objective]
+objective_type = "reach_entity"
+radius = 1.5

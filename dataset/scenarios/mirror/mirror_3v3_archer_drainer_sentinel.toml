@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archer_drainer_sentinel"
+seed = 29231
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archer", "drainer", "sentinel"]
+enemy_hero_templates = ["archer", "drainer", "sentinel"]
+max_ticks = 800
+room_type = "Pressure"

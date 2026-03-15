@@ -49,14 +49,14 @@ fn phase2_competent_small_party_fight() {
 #[test]
 fn phase2_regression_snapshot() {
     let result = run_phase2_with_seed(17);
-    assert_eq!(result.event_log_hash, 0x0122_c661_c895_0a47);
-    assert_eq!(result.final_state_hash, 0xd403_2cbd_c589_780e);
-    assert_eq!(result.metrics.winner, None);
+    assert_eq!(result.event_log_hash, 0xa192_946a_101d_8b9b);
+    assert_eq!(result.final_state_hash, 0x688c_7967_a1d2_b856);
+    assert_eq!(result.metrics.winner, Some(Team::Hero));
     assert_eq!(
         result.metrics.final_hp_by_unit,
-        vec![(1, 36), (2, 84), (3, 51), (4, 0), (5, 0), (6, 47)]
+        vec![(1, 56), (2, 81), (3, 67), (4, 0), (5, 0), (6, 0)]
     );
-    assert_eq!(result.metrics.heals_completed, 11);
+    assert_eq!(result.metrics.heals_completed, 12);
     assert_eq!(result.metrics.invariant_violations, 0);
 }
 

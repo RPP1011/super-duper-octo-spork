@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_brawler_drainer_shatter_mage"
+seed = 58310
+hero_count = 3
+enemy_count = 0
+hero_templates = ["brawler", "drainer", "shatter_mage"]
+enemy_hero_templates = ["brawler", "drainer", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

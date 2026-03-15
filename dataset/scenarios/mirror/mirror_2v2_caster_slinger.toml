@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_slinger"
+seed = 73624
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "slinger"]
+enemy_hero_templates = ["caster", "slinger"]
+max_ticks = 800
+room_type = "Pressure"

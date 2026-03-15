@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archmage_caster_executioner"
+seed = 14087
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archmage", "caster", "executioner"]
+enemy_hero_templates = ["archmage", "caster", "executioner"]
+max_ticks = 800
+room_type = "Pressure"

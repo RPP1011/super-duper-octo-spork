@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_healer_scout_slower"
+seed = 29558
+hero_count = 3
+enemy_count = 0
+hero_templates = ["healer", "scout", "slower"]
+enemy_hero_templates = ["healer", "scout", "slower"]
+max_ticks = 800
+room_type = "Pressure"

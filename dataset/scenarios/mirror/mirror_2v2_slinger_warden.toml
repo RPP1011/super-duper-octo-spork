@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_slinger_warden"
+seed = 29313
+hero_count = 2
+enemy_count = 0
+hero_templates = ["slinger", "warden"]
+enemy_hero_templates = ["slinger", "warden"]
+max_ticks = 800
+room_type = "Pressure"

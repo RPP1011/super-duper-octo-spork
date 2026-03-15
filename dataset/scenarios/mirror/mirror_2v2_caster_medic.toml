@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_caster_medic"
+seed = 92719
+hero_count = 2
+enemy_count = 0
+hero_templates = ["caster", "medic"]
+enemy_hero_templates = ["caster", "medic"]
+max_ticks = 800
+room_type = "Pressure"

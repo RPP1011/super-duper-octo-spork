@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_medic_shatter_mage_slower"
+seed = 96529
+hero_count = 3
+enemy_count = 0
+hero_templates = ["medic", "shatter_mage", "slower"]
+enemy_hero_templates = ["medic", "shatter_mage", "slower"]
+max_ticks = 800
+room_type = "Pressure"

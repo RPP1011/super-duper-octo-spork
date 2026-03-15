@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_caster_drainer_templar"
+seed = 85778
+hero_count = 3
+enemy_count = 0
+hero_templates = ["caster", "drainer", "templar"]
+enemy_hero_templates = ["caster", "drainer", "templar"]
+max_ticks = 800
+room_type = "Pressure"

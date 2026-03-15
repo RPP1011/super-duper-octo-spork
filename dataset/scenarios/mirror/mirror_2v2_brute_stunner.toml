@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_brute_stunner"
+seed = 69470
+hero_count = 2
+enemy_count = 0
+hero_templates = ["brute", "stunner"]
+enemy_hero_templates = ["brute", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

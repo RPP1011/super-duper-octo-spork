@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archer_brawler_sniper"
+seed = 68610
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archer", "brawler", "sniper"]
+enemy_hero_templates = ["archer", "brawler", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

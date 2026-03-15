@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_executioner_shadow"
+seed = 49321
+hero_count = 2
+enemy_count = 0
+hero_templates = ["executioner", "shadow"]
+enemy_hero_templates = ["executioner", "shadow"]
+max_ticks = 800
+room_type = "Pressure"

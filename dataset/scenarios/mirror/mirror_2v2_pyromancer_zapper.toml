@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_pyromancer_zapper"
+seed = 91678
+hero_count = 2
+enemy_count = 0
+hero_templates = ["pyromancer", "zapper"]
+enemy_hero_templates = ["pyromancer", "zapper"]
+max_ticks = 800
+room_type = "Pressure"

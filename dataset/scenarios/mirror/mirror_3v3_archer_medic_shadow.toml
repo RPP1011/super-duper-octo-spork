@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archer_medic_shadow"
+seed = 10110
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archer", "medic", "shadow"]
+enemy_hero_templates = ["archer", "medic", "shadow"]
+max_ticks = 800
+room_type = "Pressure"

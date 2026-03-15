@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_charger_executioner_templar"
+seed = 86379
+hero_count = 3
+enemy_count = 0
+hero_templates = ["charger", "executioner", "templar"]
+enemy_hero_templates = ["charger", "executioner", "templar"]
+max_ticks = 800
+room_type = "Pressure"

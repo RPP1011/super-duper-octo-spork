@@ -1,0 +1,58 @@
+[scenario]
+name = "drill_3_9_horde_36747"
+seed = 36747
+hero_count = 1
+enemy_count = 0
+max_ticks = 600
+room_type = "Entry"
+hero_templates = [
+    "berserker",
+]
+enemy_hero_templates = []
+drill_type = "horde"
+action_mask = "move_attack"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_0"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_1"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_2"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_3"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_4"
+
+[[scenario.enemy_units]]
+behavior = "melee_chaser"
+template = "scout"
+hp_override = 150
+dps_override = 8.0
+tag = "minion_5"
+
+[scenario.objective]
+objective_type = "kill_all"

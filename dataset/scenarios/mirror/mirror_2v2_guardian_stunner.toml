@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_guardian_stunner"
+seed = 74032
+hero_count = 2
+enemy_count = 0
+hero_templates = ["guardian", "stunner"]
+enemy_hero_templates = ["guardian", "stunner"]
+max_ticks = 800
+room_type = "Pressure"

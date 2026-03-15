@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_priest_stunner_templar"
+seed = 75762
+hero_count = 3
+enemy_count = 0
+hero_templates = ["priest", "stunner", "templar"]
+enemy_hero_templates = ["priest", "stunner", "templar"]
+max_ticks = 800
+room_type = "Pressure"

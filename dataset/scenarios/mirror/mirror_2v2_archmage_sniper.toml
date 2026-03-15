@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archmage_sniper"
+seed = 99733
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archmage", "sniper"]
+enemy_hero_templates = ["archmage", "sniper"]
+max_ticks = 800
+room_type = "Pressure"

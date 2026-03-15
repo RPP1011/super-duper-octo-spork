@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_caster_protector_skirmisher"
+seed = 60173
+hero_count = 3
+enemy_count = 0
+hero_templates = ["caster", "protector", "skirmisher"]
+enemy_hero_templates = ["caster", "protector", "skirmisher"]
+max_ticks = 800
+room_type = "Pressure"

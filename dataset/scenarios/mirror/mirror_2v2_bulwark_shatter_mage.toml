@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_bulwark_shatter_mage"
+seed = 95180
+hero_count = 2
+enemy_count = 0
+hero_templates = ["bulwark", "shatter_mage"]
+enemy_hero_templates = ["bulwark", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

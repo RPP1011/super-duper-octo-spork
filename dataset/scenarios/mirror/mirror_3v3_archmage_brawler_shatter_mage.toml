@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_3v3_archmage_brawler_shatter_mage"
+seed = 65183
+hero_count = 3
+enemy_count = 0
+hero_templates = ["archmage", "brawler", "shatter_mage"]
+enemy_hero_templates = ["archmage", "brawler", "shatter_mage"]
+max_ticks = 800
+room_type = "Pressure"

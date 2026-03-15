@@ -1,5 +1,6 @@
 //! Per-unit feature extraction (115 features).
 
+use contracts::*;
 use super::super::{distance, is_alive, SimState, SimVec2};
 use crate::ai::effects::StatusKind;
 use crate::ai::squad::SquadAiState;
@@ -33,6 +34,7 @@ fn is_healer(u: &super::super::UnitState) -> bool {
 }
 
 /// Extract 115 features for a single unit in context of the battle.
+#[ensures(ret.iter().all(|v| v.is_finite()))]
 pub fn extract_unit_features(
     state: &SimState,
     squad_ai: &SquadAiState,
@@ -316,4 +318,24 @@ pub fn extract_unit_features(
     f[114] = (allies.len() as f32 - enemies.len() as f32) / 4.0;
 
     f
+}
+
+/// Validate a feature vector for NaN/Inf and expected bounds.
+/// Returns Ok(()) if valid, Err with description if invalid.
+pub fn verify_features(features: &[f32], expected_dim: usize, context: &str) -> Result<(), String> {
+    if features.len() != expected_dim {
+        return Err(format!(
+            "{}: expected {} features, got {}",
+            context, expected_dim, features.len()
+        ));
+    }
+    for (i, &v) in features.iter().enumerate() {
+        if !v.is_finite() {
+            return Err(format!(
+                "{}: feature[{}] is {} (NaN/Inf)",
+                context, i, v
+            ));
+        }
+    }
+    Ok(())
 }

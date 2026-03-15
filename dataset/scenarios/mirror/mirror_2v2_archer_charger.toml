@@ -1,0 +1,9 @@
+[scenario]
+name = "mirror_2v2_archer_charger"
+seed = 59797
+hero_count = 2
+enemy_count = 0
+hero_templates = ["archer", "charger"]
+enemy_hero_templates = ["archer", "charger"]
+max_ticks = 800
+room_type = "Pressure"

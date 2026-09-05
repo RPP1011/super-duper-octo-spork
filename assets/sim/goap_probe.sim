@@ -1,0 +1,79 @@
+// goap_probe — end-to-end proof for the `goap` declaration (real
+// backward-chained precondition search, resolved at compile time,
+// executing per-agent on GPU every tick — see `dsl_ast::goap`'s module
+// doc for the full design).
+//
+// SHAPE: a tiny colony-economy dependency graph —
+//
+//   ChopWood ---------> has_timber -----> BuildHearth -----> has_hearth --\
+//                                                                          \
+//   Forage ------------------------------> has_raw_food -------------------> Cook -> has_meal
+//
+// goal: has_meal. Four agents are seeded (by the pin test, via direct
+// buffer writes — see `crates/sims/tests/goap_probe_pin.rs`) at four
+// DIFFERENT points along this chain, so the SAME compiled kernel must
+// pick a DIFFERENT next action for each, purely from that agent's own
+// current field values:
+//
+//   slot 0: nothing               -> expect ChopWood   (id 1)
+//   slot 1: has_timber only       -> expect BuildHearth (id 2)
+//   slot 2: has_hearth only       -> expect Forage       (id 3)  (independent branch)
+//   slot 3: has_hearth + raw_food -> expect Cook          (id 4)
+//
+// This is the load-bearing behavioural pin: it's not enough that this
+// compiles (dsl_ast's own unit/integration tests already prove the
+// desugaring algorithm and that resolution needs no goap-specific
+// code) — this fixture proves the FULL pipeline (CG lowering, WGSL
+// emission, real GPU execution) produces the SAME per-agent divergent
+// decisions the compile-time search predicts.
+
+event Tick { }
+
+entity Colonist : Agent {
+  pos: vec3,
+}
+
+field inv_timber: f32
+field inv_hearth: u32
+field inv_raw_food: f32
+field inv_meal: f32
+field chosen_action: u32
+
+goap ColonistPlan {
+  fact has_timber = self.inv_timber >= 4.0
+  fact has_hearth = self.inv_hearth >= 1u
+  fact has_raw_food = self.inv_raw_food >= 1.0
+  fact has_meal = self.inv_meal >= 1.0
+
+  action ChopWood {
+    produces: [has_timber]
+    cost: 1.0
+    id: 1
+  }
+
+  action BuildHearth {
+    requires: [has_timber]
+    produces: [has_hearth]
+    cost: 2.0
+    id: 2
+  }
+
+  action Forage {
+    produces: [has_raw_food]
+    cost: 1.0
+    id: 3
+  }
+
+  action Cook {
+    requires: [has_hearth, has_raw_food]
+    produces: [has_meal]
+    cost: 1.5
+    id: 4
+  }
+
+  goal {
+    requires: [has_meal]
+  }
+
+  output chosen_action
+}

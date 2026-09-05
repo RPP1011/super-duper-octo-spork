@@ -16,6 +16,7 @@ pub mod ir;
 pub mod parser;
 pub mod resolve;
 pub mod eval;
+pub mod goap;
 
 pub use ability_parser::parse_ability_file;
 pub use ast::{

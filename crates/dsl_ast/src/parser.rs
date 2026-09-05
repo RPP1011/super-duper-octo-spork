@@ -193,6 +193,15 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
         }
         c.skip_ws();
     }
+    if let Err(e) = crate::goap::desugar_goap_decls(&mut decls) {
+        return Err(ParseError::new(
+            source,
+            e.span,
+            vec!["desugaring `goap` declaration".to_string()],
+            e.message,
+        ));
+    }
+
     Ok(Program { imports, imports_resolved: vec![], decls, terrain, controls, render, ui })
 }
 
@@ -286,6 +295,7 @@ fn decl_annotations_mut(d: &mut Decl) -> Option<&mut Vec<Annotation>> {
         Decl::SpatialQuery(x) => &mut x.annotations,
         Decl::Belief(x) => &mut x.annotations,
         Decl::Table(x) => &mut x.annotations,
+        Decl::Goap(x) => &mut x.annotations,
         Decl::RegionKind(x) => &mut x.annotations,
         Decl::RegionIndices(x) => &mut x.annotations,
         Decl::Index(x) => &mut x.annotations,
@@ -320,6 +330,7 @@ fn decl_span_mut(d: &mut Decl) -> &mut Span {
         Decl::AgentField(x) => &mut x.span,
         Decl::Belief(x) => &mut x.span,
         Decl::Table(x) => &mut x.span,
+        Decl::Goap(x) => &mut x.span,
         Decl::RegionKind(x) => &mut x.span,
         Decl::RegionIndices(x) => &mut x.span,
         Decl::Index(x) => &mut x.span,
@@ -360,6 +371,7 @@ fn decl(c: &mut Cursor) -> PResult<Decl> {
         Some("debug") => debug_decl(c, annotations, start).map(Decl::Debug),
         Some("field") => agent_field_decl(c, annotations, start).map(Decl::AgentField),
         Some("table") => table_decl(c, annotations, start).map(Decl::Table),
+        Some("goap") => goap_decl(c, annotations, start).map(Decl::Goap),
         Some("region_kind") => region_kind_decl(c, annotations, start).map(Decl::RegionKind),
         Some("region_indices") => region_indices_decl(c, annotations, start).map(Decl::RegionIndices),
         Some("index") => index_decl(c, annotations, start).map(Decl::Index),
@@ -517,6 +529,184 @@ fn table_decl(
         values,
         span: Span::new(start, c.pos),
     })
+}
+
+// ---------------------------------------------------------------------------
+// goap — goal-oriented action planning (real backward-chained precondition
+// search, resolved entirely at compile time; see `GoapDecl`'s doc comment
+// in ast.rs and `goap::desugar_goap`).
+//
+// Grammar:
+//   goap <Name> {
+//     fact <ident> = <bool expr>
+//     ...
+//     action <Ident> {
+//       requires: [<fact>, ...]   // optional, defaults to []
+//       produces: [<fact>, ...]
+//       cost: <float>
+//       id: <int>
+//     }
+//     ...
+//     goal { requires: [<fact>, ...] }
+//     output <field ident>
+//   }
+// ---------------------------------------------------------------------------
+
+fn goap_decl(c: &mut Cursor, annotations: Vec<Annotation>, start: usize) -> PResult<GoapDecl> {
+    expect_keyword(c, "goap").map_err(|e| e.with_context("parsing `goap` declaration"))?;
+    let name = ident(c).map_err(|e| e.with_context("parsing goap block name"))?;
+    c.skip_ws();
+    expect_char(c, '{').map_err(|e| e.with_context("parsing goap body (expected `{`)"))?;
+
+    let mut facts = Vec::new();
+    let mut actions = Vec::new();
+    let mut goal: Option<GoapGoalDecl> = None;
+    let mut output: Option<String> = None;
+
+    loop {
+        c.skip_ws();
+        if c.starts_with_char('}') {
+            c.bump(1);
+            break;
+        }
+        if starts_with_keyword(c, "fact") {
+            facts.push(parse_goap_fact(c)?);
+        } else if starts_with_keyword(c, "action") {
+            actions.push(parse_goap_action(c)?);
+        } else if starts_with_keyword(c, "goal") {
+            if goal.is_some() {
+                return Err(ParseErr::at(here(c), "a `goap` block may declare only one `goal`"));
+            }
+            goal = Some(parse_goap_goal(c)?);
+        } else if starts_with_keyword(c, "output") {
+            if output.is_some() {
+                return Err(ParseErr::at(here(c), "a `goap` block may declare only one `output`"));
+            }
+            c.bump("output".len());
+            output = Some(ident(c).map_err(|e| e.with_context("parsing goap `output` field name"))?);
+        } else {
+            return Err(ParseErr::at(
+                here(c),
+                "expected `fact`, `action`, `goal`, or `output` inside a `goap` block",
+            ));
+        }
+    }
+
+    let goal = goal.ok_or_else(|| ParseErr::at(here(c), "a `goap` block must declare exactly one `goal`"))?;
+    let output = output.ok_or_else(|| ParseErr::at(here(c), "a `goap` block must declare an `output` field"))?;
+
+    Ok(GoapDecl { annotations, name, facts, actions, goal, output, span: Span::new(start, c.pos) })
+}
+
+fn parse_goap_fact(c: &mut Cursor) -> PResult<GoapFact> {
+    let start = c.pos;
+    expect_keyword(c, "fact").map_err(|e| e.with_context("parsing goap `fact`"))?;
+    let name = ident(c).map_err(|e| e.with_context("parsing goap fact name"))?;
+    c.skip_ws();
+    expect_char(c, '=').map_err(|e| e.with_context("parsing goap fact (expected `=`)"))?;
+    let expr = parse_expr(c).map_err(|e| e.with_context("parsing goap fact expression"))?;
+    Ok(GoapFact { name, expr, span: Span::new(start, c.pos) })
+}
+
+fn parse_goap_ident_list(c: &mut Cursor) -> PResult<Vec<String>> {
+    c.skip_ws();
+    expect_char(c, '[').map_err(|e| e.with_context("parsing goap fact list (expected `[`)"))?;
+    let mut items = Vec::new();
+    loop {
+        c.skip_ws();
+        if c.starts_with_char(']') {
+            c.bump(1);
+            break;
+        }
+        items.push(ident(c).map_err(|e| e.with_context("parsing goap fact list item"))?);
+        c.skip_ws();
+        if c.starts_with_char(',') {
+            c.bump(1);
+        }
+    }
+    Ok(items)
+}
+
+fn parse_goap_action(c: &mut Cursor) -> PResult<GoapActionDecl> {
+    let start = c.pos;
+    expect_keyword(c, "action").map_err(|e| e.with_context("parsing goap `action`"))?;
+    let name = ident(c).map_err(|e| e.with_context("parsing goap action name"))?;
+    c.skip_ws();
+    expect_char(c, '{').map_err(|e| e.with_context("parsing goap action body (expected `{`)"))?;
+
+    let mut requires: Vec<String> = Vec::new();
+    let mut produces: Vec<String> = Vec::new();
+    let mut cost: Option<f64> = None;
+    let mut id: Option<i64> = None;
+
+    loop {
+        c.skip_ws();
+        if c.starts_with_char('}') {
+            c.bump(1);
+            break;
+        }
+        let key = ident(c).map_err(|e| e.with_context("parsing goap action field name"))?;
+        c.skip_ws();
+        expect_char(c, ':').map_err(|e| e.with_context("parsing goap action field (expected `:`)"))?;
+        match key.as_str() {
+            "requires" => requires = parse_goap_ident_list(c)?,
+            "produces" => produces = parse_goap_ident_list(c)?,
+            "cost" => {
+                let (v, _) = number_literal(c).map_err(|e| e.with_context("parsing goap action `cost`"))?;
+                cost = Some(v);
+            }
+            "id" => {
+                let (v, is_float) = number_literal(c).map_err(|e| e.with_context("parsing goap action `id`"))?;
+                if is_float {
+                    return Err(ParseErr::at(here(c), "goap action `id` must be an integer"));
+                }
+                id = Some(v as i64);
+            }
+            other => {
+                return Err(ParseErr::at(
+                    here(c),
+                    format!("unknown goap action field `{other}` (expected `requires`, `produces`, `cost`, or `id`)"),
+                ));
+            }
+        }
+        c.skip_ws();
+        if c.starts_with_char(',') {
+            c.bump(1);
+        }
+    }
+
+    let cost = cost.ok_or_else(|| ParseErr::at(here(c), format!("goap action `{name}` is missing `cost`")))?;
+    let id = id.ok_or_else(|| ParseErr::at(here(c), format!("goap action `{name}` is missing `id`")))?;
+    if produces.is_empty() {
+        return Err(ParseErr::at(here(c), format!("goap action `{name}` must `produces` at least one fact")));
+    }
+
+    Ok(GoapActionDecl { name, requires, produces, cost, id, span: Span::new(start, c.pos) })
+}
+
+fn parse_goap_goal(c: &mut Cursor) -> PResult<GoapGoalDecl> {
+    let start = c.pos;
+    expect_keyword(c, "goal").map_err(|e| e.with_context("parsing goap `goal`"))?;
+    c.skip_ws();
+    expect_char(c, '{').map_err(|e| e.with_context("parsing goap goal body (expected `{`)"))?;
+    c.skip_ws();
+    let key = ident(c).map_err(|e| e.with_context("parsing goap goal field name"))?;
+    if key != "requires" {
+        return Err(ParseErr::at(here(c), "goap `goal` must have a `requires` field"));
+    }
+    c.skip_ws();
+    expect_char(c, ':').map_err(|e| e.with_context("parsing goap goal field (expected `:`)"))?;
+    let requires = parse_goap_ident_list(c)?;
+    if requires.is_empty() {
+        return Err(ParseErr::at(here(c), "goap `goal` must `requires` at least one fact"));
+    }
+    c.skip_ws();
+    if c.starts_with_char(',') {
+        c.bump(1);
+    }
+    c.skip_ws();
+    expect_char(c, '}').map_err(|e| e.with_context("parsing goap goal body (expected `}`)"))?;
+    Ok(GoapGoalDecl { requires, span: Span::new(start, c.pos) })
 }
 
 // ---------------------------------------------------------------------------

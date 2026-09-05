@@ -253,6 +253,13 @@ fn decl_kind_and_name(decl: &dsl_ast::ast::Decl) -> Option<(&'static str, String
         RegionKind(d)   => Some(("region_kind",  d.name.clone())),
         RegionIndices(d) => Some(("region_indices", d.name.clone())),
         Index(d)        => Some(("index",        d.name.clone())),
+        // `goap` blocks desugar into a `Physics` decl (see
+        // `dsl_ast::goap`) before this ever runs; a `Decl::Goap` here
+        // would mean desugaring was skipped somewhere upstream — treat
+        // it like the other no-top-level-name variants rather than
+        // panic, since a missing desugar pass will already have failed
+        // loudly at parse time.
+        Goap(_) => None,
         // Variants without a top-level name bypass collision detection.
         Init(_) | Debug(_) | Mask(_) | Scoring(_) | Metric(_) => None,
     }

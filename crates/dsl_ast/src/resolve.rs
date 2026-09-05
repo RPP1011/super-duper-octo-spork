@@ -1241,6 +1241,13 @@ fn collect(
                     span: d.span,
                 });
             }
+            Decl::Goap(_) => {
+                // `goap` blocks are desugared into an ordinary `Decl::Physics`
+                // entirely at the AST level, in `goap::desugar_goap`, called
+                // right after parsing (see `parse_program`/`parse`) — no
+                // `Decl::Goap` should ever survive to reach here. Nothing to
+                // register.
+            }
             Decl::RegionKind(d) => {
                 // Reserve the IR slot keyed by the kind name. The
                 // sibling `Decl::RegionIndices` decl is matched in
@@ -2100,6 +2107,10 @@ fn resolve_bodies(
                 }
                 comp.tables[idx as usize].element_ty = element_ty;
                 comp.tables[idx as usize].values = d.values.clone();
+            }
+            Decl::Goap(_) => {
+                // Desugared away before resolution — see the pass-1 arm
+                // above for the full explanation.
             }
             Decl::Belief(d) => {
                 // Plan I — resolve the belief body into the reserved

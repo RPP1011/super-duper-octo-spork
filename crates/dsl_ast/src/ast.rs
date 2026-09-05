@@ -15,7 +15,7 @@ impl Span {
     pub fn new(start: usize, end: usize) -> Self {
         Span { start, end }
     }
-    pub fn dummy() -> Self {
+    pub const fn dummy() -> Self {
         Span { start: 0, end: 0 }
     }
 }
@@ -113,6 +113,17 @@ pub enum Decl {
     /// not mutate" (room door bitmaps, terrain costs, faction
     /// stances, etc.) — rooms ARE NOT agents.
     Table(TableDecl),
+    /// `goap <Name> { fact ...; action ...; goal { requires: [...] } output <field> }`
+    /// — a declared goal/action/precondition graph. See [`GoapDecl`]: this
+    /// desugars ENTIRELY at the AST level (before resolution ever runs —
+    /// `desugar_goap` in `goap.rs`) into an ordinary per-agent `PhysicsDecl`.
+    /// The backward-chaining search over the graph runs ONCE, here, at
+    /// compile time (the graph is static — known from source, not from any
+    /// agent's live state); only per-agent PRECONDITION EVALUATION survives
+    /// into the compiled kernel, as a plain nested branch chain checking
+    /// each reachable action's own requirements against that agent's
+    /// CURRENT field values. No new runtime GPU primitive is needed.
+    Goap(GoapDecl),
     /// Per spec `docs/superpowers/specs/2026-04-25-voxel-region-indices-design.md`
     /// §6.1.2 — declares a `VoxelRegionKind` tag + its `max_active`
     /// instance cap.
@@ -473,6 +484,79 @@ pub struct TableDecl {
     /// conversion; the resolver bounds-checks against the declared
     /// element type at registration time.
     pub values: Vec<i64>,
+    pub span: Span,
+}
+
+/// `goap <Name> { fact <ident> = <bool expr>; ... action <Ident> { requires:
+/// [...], produces: [...], cost: <float> } -> <id>; ... goal { requires:
+/// [...] } output <field> }` — GOAL-ORIENTED ACTION PLANNING, real
+/// backward-chained precondition satisfaction, per agent, on GPU.
+///
+/// THE KEY IDEA: the action/fact GRAPH is static — fully known from source
+/// text, not from any agent's live state — so the expensive part (search)
+/// runs exactly ONCE, at compile time, in `goap::desugar_goap`, exploring
+/// the graph backward from `goal` the same way a classic regressive GOAP
+/// planner would. What survives into the compiled kernel is NOT a search —
+/// it's the compile-time search's OUTPUT, specialized into a plain nested
+/// branch chain: "is this fact already true for me; if not, are ITS
+/// prerequisites already true for me; if so, commit to the action that
+/// produces it." Every branch reads only per-agent CURRENT field values
+/// (through each fact's own `expr`), so two agents in different states take
+/// different branches — genuine plan-directed, per-agent behavior — without
+/// requiring any new runtime primitive (mutable loop-carried locals, dynamic
+/// arrays) that the compute-shader lowering doesn't already support.
+///
+/// Desugars into an ordinary `PhysicsDecl` (`@phase(per_agent)`, `on Tick`)
+/// before resolution ever sees `Decl::Goap` — the rest of the compiler
+/// pipeline (IR, CG lowering, WGSL emission) needs no `Goap`-specific code
+/// at all.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GoapDecl {
+    pub annotations: Vec<Annotation>,
+    pub name: String,
+    pub facts: Vec<GoapFact>,
+    pub actions: Vec<GoapActionDecl>,
+    pub goal: GoapGoalDecl,
+    /// The `u32` field this block writes its chosen action's id into every
+    /// tick (`0` = nothing reachable needs doing). Must be a field already
+    /// declared elsewhere in the program (`field <output>: u32`).
+    pub output: String,
+    pub span: Span,
+}
+
+/// A named boolean condition, backed by an arbitrary expression over
+/// existing per-agent fields/config — re-evaluated fresh every tick, so it
+/// always reflects that agent's CURRENT state, never a cached/stale value.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GoapFact {
+    pub name: String,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// One action in the graph. `requires`/`produces` reference `GoapFact`
+/// names declared in the same block (order-independent — the search
+/// resolves the graph, not source order).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GoapActionDecl {
+    pub name: String,
+    pub requires: Vec<String>,
+    pub produces: Vec<String>,
+    /// Search cost — the cheapest producer of a fact wins when more than
+    /// one action produces it. Ties break on declaration order.
+    pub cost: f64,
+    /// The value committed to `output` when this action is chosen. Author-
+    /// assigned so it lines up with whatever the rest of the fixture
+    /// interprets that id to mean (a job-priority index, an ability id, …).
+    pub id: i64,
+    pub span: Span,
+}
+
+/// `goal { requires: [fact1, fact2, ...] }` — the condition the graph is
+/// searched backward from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GoapGoalDecl {
+    pub requires: Vec<String>,
     pub span: Span,
 }
 

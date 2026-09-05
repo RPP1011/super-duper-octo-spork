@@ -45,6 +45,7 @@ fn main() {
             // .sim parses cleanly + its handcoded crate gets deleted.
             "threat_impact"
                 | "belief_read_probe"
+                | "verb_belief_score_probe"
                 | "boids"
                 | "cooldown_probe"
                 | "for_each_agent_probe"

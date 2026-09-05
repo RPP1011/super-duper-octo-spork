@@ -1,0 +1,71 @@
+// verb_belief_score_probe — spike: can a `verb`'s `score` expression read
+// a pair-keyed `belief` directly (`grudge(self, target)`), the way
+// `dsl_ast::eval::mod.rs`'s `ReadContext` doc comment claims scoring
+// already can ("pure reads; used by masks, scoring, and lazy views")?
+// webband_colony.sim's epistemic-split LAW forbids this today as a
+// deliberate app-level policy (enforced by a Rust source-text lint, not
+// a compiler limitation) — this fixture checks the compiler's own
+// capability in isolation, the same way `belief_read_probe.sim` checked
+// physics rules.
+
+event Tick { }
+event Brawl { aggressor: Agent, victim: Agent }
+event Approached { who: Agent, whom: Agent }
+
+entity Colonist : Agent {
+  pos: vec3,
+}
+
+@materialized(on_event = [Brawl], storage = pair_map)
+belief grudge(observer: Agent, subject: Agent) -> f32 {
+  initial: 0.0,
+  on Brawl { aggressor: a, victim: v }
+    where (v == observer) && (a == subject)
+    { self += 10.0 }
+  clamp: [0.0, 100.0],
+}
+
+// Argmax over every OTHER colonist, preferring the one held in LEAST
+// grudge (score = -grudge(self, target); highest score = lowest grudge).
+//
+// `when` is a per-AGENT gate only (does this row have any candidate at
+// all) — the scoring kernel's argmax scan does NOT re-check `when` per
+// candidate, so per-candidate elimination (self-exclusion, liveness,
+// kind) has to be repeated in `score`'s sentinel guard. This is the same
+// double-filter idiom every real verb in webband_colony.sim uses
+// (`when` AND an `if (...) {…} else {-1e9}` in `score` re-testing the
+// identical predicate) — discovered here, not assumed.
+verb Approach(self, target: Agent) =
+  action ApproachAction
+  when (self.alive)
+  emit Approached { who: self, whom: target }
+  score (if (target.alive && target != self && target.creature_type == config.probe.ct_colonist) {
+    0.0 - grudge(self, target)
+  } else { -1000000000.0 })
+
+config probe {
+  ct_colonist: u32 = 0u,
+}
+
+@materialized(on_event = [Approached])
+view approached_count(who: Agent) -> f32 {
+  initial: 0.0,
+  on Approached { who: w, whom: _ } { self += 1.0 }
+  clamp: [0.0, 1000000.0],
+}
+
+field tag: u32
+field last_target_tag: u32
+
+// The load-bearing readback: which target did the argmax actually pick,
+// per acting agent — recorded indirectly via the target's own `tag`
+// field (u32, seeded distinctly per candidate by the pin test) since
+// custom `field` storage doesn't support an AgentId type directly.
+// Unconditional post-consumer of the winning verb's emitted event — same
+// idiom as webband_colony.sim's `ApplyTended`.
+@phase(post)
+physics RecordApproach {
+  on Approached { who: w, whom: t } {
+    agents.set_last_target_tag(w, agents.tag(t));
+  }
+}

@@ -1,0 +1,37 @@
+// belief_read_probe — spike: CAN a per-agent physics rule read a
+// pair-keyed `belief` directly? webband_colony.sim's header claims
+// "physics cannot read views" (and beliefs share the view storage slot
+// table per dsl_ast::resolve — see the `Decl::Belief` comment there), but
+// that claim was never verified against the compiler; it may just be
+// "nobody tried it yet" rather than a hard limitation. This fixture is
+// the empirical answer: it either compiles + emits a real kernel, or the
+// compiler rejects/drops it with a diagnostic naming the actual reason.
+
+event Tick { }
+event Brawl { aggressor: Agent, victim: Agent }
+
+entity Colonist : Agent {
+  pos: vec3,
+}
+
+field seen_grudge: f32
+
+@materialized(on_event = [Brawl], storage = pair_map)
+belief grudge(observer: Agent, subject: Agent) -> f32 {
+  initial: 0.0,
+  on Brawl { aggressor: a, victim: v }
+    where (v == observer) && (a == subject)
+    { self += 10.0 }
+  clamp: [0.0, 100.0],
+}
+
+// Self-directed on purpose (`grudge(self, self)`) — this fixture only
+// asks whether a per-agent physics rule can read a pair-keyed belief AT
+// ALL. If it lowers/compiles, the pin test seeds the diagonal cell
+// `[i*n+i]` directly and checks the read comes back through `seen_grudge`.
+physics ReadGrudge @phase(per_agent) {
+  on Tick {} {
+    let g = grudge(self, self);
+    agents.set_seen_grudge(self, g);
+  }
+}

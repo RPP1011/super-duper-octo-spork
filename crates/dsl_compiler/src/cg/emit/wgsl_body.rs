@@ -1461,6 +1461,10 @@ fn builtin_name(id: BuiltinId) -> String {
         Log10 => "log10".to_string(),
         Entity => "entity".to_string(),
         ViewCall { view } => format!("view_{}_get", view.0),
+        // Read side of `@per_entity_ring` struct-payload storage — one
+        // helper per (view, field), emitted alongside `view_<id>_get`
+        // by the same per-view prelude composer.
+        RingFieldRead { view, field_offset, .. } => format!("view_{}_field_{field_offset}_get", view.0),
         // Plan G G3f follow-up — `threats.nearest(observer)` per-view
         // ring-walk reduction. The helper is emitted by
         // `compose_view_storage_prelude` and returns `u32` (AgentId).

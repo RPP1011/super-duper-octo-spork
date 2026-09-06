@@ -3200,6 +3200,29 @@ fn resolve_call(
     // (ns+method kept), with `Unknown` return type; 1b flags it.
     if let ExprKind::Field(base, method) = &callee.kind {
         if let ExprKind::Ident(ns_name) = &base.kind {
+            // `<ring_view_name>.<field_name>(key, index)` — the read side
+            // of `@per_entity_ring` struct-payload storage. Checked BEFORE
+            // the stdlib-namespace branch below (a view name never
+            // collides with a namespace name, but checking first keeps
+            // the two paths visibly independent). Resolve-time only
+            // captures the field NAME + args; whether `ns_name` is
+            // actually a `PerEntityRing` view, whether `method` names a
+            // real field on its layout, and the exact arg count (must be
+            // 2: key, index) are all validated at CG-lowering time
+            // instead — the same deferred-validation shape
+            // `self.append(...)` already uses, since the view's struct
+            // layout isn't known until ITS OWN fold body lowers, which
+            // may not have happened yet at this point in a single
+            // resolve pass.
+            if scope.lookup(ns_name).is_none() && !symbols.stdlib_namespaces.contains_key(ns_name) {
+                if let Some(view_ref) = symbols.views.get(ns_name) {
+                    let ir_args = args
+                        .iter()
+                        .map(|a| resolve_call_arg(a, scope, symbols))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(IrExpr::RingFieldRead(*view_ref, method.clone(), ir_args));
+                }
+            }
             if scope.lookup(ns_name).is_none() {
                 if let Some(ns) = symbols.stdlib_namespaces.get(ns_name) {
                     let ir_args = args
@@ -4600,13 +4623,17 @@ fn validate_fold_expr(view_name: &str, e: &IrExprNode) -> Result<(), ResolveErro
 
         // Cross-view composition rejected — views-calling-views inside a
         // fold body would break the one-pass commutative-update contract.
-        IrExpr::ViewCall(_, _) | IrExpr::View(_) => Err(ResolveError::UdfInViewFoldBody {
-            view_name: view_name.to_string(),
-            offending_construct:
-                "call to another view (cross-view composition forbidden in fold bodies)"
-                    .into(),
-            span: e.span,
-        }),
+        // A ring-field read is the same category (reading another
+        // materialized computation) so it's rejected here too.
+        IrExpr::ViewCall(_, _) | IrExpr::View(_) | IrExpr::RingFieldRead(_, _, _) => {
+            Err(ResolveError::UdfInViewFoldBody {
+                view_name: view_name.to_string(),
+                offending_construct:
+                    "call to another view (cross-view composition forbidden in fold bodies)"
+                        .into(),
+                span: e.span,
+            })
+        }
 
         // Verb calls are not fold-body primitives.
         IrExpr::VerbCall(_, _) | IrExpr::Verb(_) => Err(ResolveError::UdfInViewFoldBody {
@@ -5064,6 +5091,15 @@ fn validate_physics_expr(physics_name: &str, e: &IrExprNode) -> Result<(), Resol
             }
             Ok(())
         }
+        // Ring-field reads (`ring.field(key, index)`) are the read-side
+        // counterpart of `@per_entity_ring` storage — same bounded-buffer
+        // shape as a view call, just indexed.
+        IrExpr::RingFieldRead(_, _, args) => {
+            for a in args {
+                validate_physics_expr(physics_name, &a.value)?;
+            }
+            Ok(())
+        }
         IrExpr::View(_) | IrExpr::Verb(_) => Ok(()),
 
         // Verb call args: recurse only — verbs lower to scoring-row lookups.
@@ -5291,6 +5327,20 @@ fn validate_physics_iter_source(
                 span: for_span,
             })
         }
+
+        // A ring-field read is always a single scalar cell value, never a
+        // collection — unlike `ViewCall` above (a materialized view CAN
+        // itself be a bounded aggregate), there is no sense in which this
+        // is iterable.
+        IrExpr::RingFieldRead(_, _, _) => Err(ResolveError::NotGpuEmittable {
+            physics_name: physics_name.to_string(),
+            construct: "for-loop over a ring-field read".into(),
+            reason: "`ring.field(key, index)` reads one scalar cell value, not a collection — \
+                      to scan a ring's K cells, read each index explicitly (K is a small compile-time \
+                      constant; unroll it by hand)"
+                .into(),
+            span: for_span,
+        }),
 
         IrExpr::LitBool(_)
         | IrExpr::LitInt(_)
@@ -5640,6 +5690,12 @@ fn validate_mask_body(mask_name: &str, e: &IrExprNode) -> Result<(), ResolveErro
             }
             Ok(())
         }
+        IrExpr::RingFieldRead(_, _, args) => {
+            for a in args {
+                validate_mask_body(mask_name, &a.value)?;
+            }
+            Ok(())
+        }
         IrExpr::View(_) => Ok(()),
 
         IrExpr::VerbCall(_, args) => {
@@ -5776,6 +5832,12 @@ fn validate_scoring_body(e: &IrExprNode) -> Result<(), ResolveError> {
         }
 
         IrExpr::ViewCall(_, args) => {
+            for a in args {
+                validate_scoring_body(&a.value)?;
+            }
+            Ok(())
+        }
+        IrExpr::RingFieldRead(_, _, args) => {
             for a in args {
                 validate_scoring_body(&a.value)?;
             }

@@ -774,6 +774,44 @@ pub enum LoweringError {
         span: Span,
     },
 
+    /// `<ring_view_name>.<field_name>(key, index)` (the ring-field-read
+    /// primitive) named a view whose storage hint is not
+    /// `@per_entity_ring(...)`. Reading a specific cell by index only
+    /// makes sense for a ring; other storage shapes have no per-key
+    /// cursor and no fixed K to index against.
+    RingFieldReadRequiresPerEntityRing {
+        view: ViewId,
+        hint_label: &'static str,
+        span: Span,
+    },
+
+    /// `<ring_view_name>.<field_name>(key, index)` named a field that
+    /// doesn't exist on the view's registered cell layout — or the view
+    /// has no registered layout at all yet (its own `self.append(...)`
+    /// was never lowered, e.g. a scalar-payload ring, which has no
+    /// named fields to read this way at all — see [`Self::
+    /// RingFieldReadOnScalarRing`] for that specific case).
+    RingFieldReadUnknownField {
+        view: ViewId,
+        field: String,
+        known_fields: Vec<String>,
+        span: Span,
+    },
+
+    /// `<ring_view_name>(...)` — a scalar-payload ring (`self += expr`,
+    /// no named cell fields) called via the dotted `.field(...)` read
+    /// form, which requires a struct payload to have a field to name.
+    RingFieldReadOnScalarRing { view: ViewId, span: Span },
+
+    /// `<ring_view_name>.<field_name>(...)` called with a number of
+    /// arguments other than exactly 2 (`key`, `index`).
+    RingFieldReadArityMismatch {
+        view: ViewId,
+        field: String,
+        got: usize,
+        span: Span,
+    },
+
     // -- Driver pass (Task 2.8) ------------------------------------------
 
     /// A view fold-handler or physics-rule kind-pattern names an
@@ -1288,6 +1326,40 @@ impl fmt::Display for LoweringError {
                 f,
                 "view#{} at {}..{} declares conflicting `self.append(...)` field counts ({} vs {}); a single view's struct-cell layout must be uniform across all SelfAppend statements",
                 view.0, span.start, span.end, prior_field_count, new_field_count
+            ),
+            LoweringError::RingFieldReadRequiresPerEntityRing {
+                view,
+                hint_label,
+                span,
+            } => write!(
+                f,
+                "view#{} at {}..{} is read via `.field(key, index)` but its storage hint is `{}`; ring-field reads require `@per_entity_ring(...)`",
+                view.0, span.start, span.end, hint_label
+            ),
+            LoweringError::RingFieldReadUnknownField {
+                view,
+                field,
+                known_fields,
+                span,
+            } => write!(
+                f,
+                "view#{} at {}..{} has no field named `{field}`; known fields are {known_fields:?}",
+                view.0, span.start, span.end
+            ),
+            LoweringError::RingFieldReadOnScalarRing { view, span } => write!(
+                f,
+                "view#{} at {}..{} is a scalar-payload ring (`self += <expr>`, no named cell fields) — called via `.field(...)`, which requires a struct payload (`self.append(field: ..., ...)`)",
+                view.0, span.start, span.end
+            ),
+            LoweringError::RingFieldReadArityMismatch {
+                view,
+                field,
+                got,
+                span,
+            } => write!(
+                f,
+                "view#{} at {}..{} field `{field}` called with {got} argument(s); ring-field reads take exactly 2 (key, index)",
+                view.0, span.start, span.end
             ),
 
             // -- Physics pass -----------------------------------------

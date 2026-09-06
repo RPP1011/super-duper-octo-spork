@@ -61,6 +61,7 @@ fn main() {
                 | "param_rule_smoke"
                 | "per_entity_ring_probe"
                 | "per_entity_ring_struct_probe"
+                | "ring_field_read_probe"
                 | "crafting_diffusion"
                 | "flocking_skirmish"
                 | "abilities_probe"

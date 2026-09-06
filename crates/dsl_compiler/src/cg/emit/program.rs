@@ -1463,7 +1463,40 @@ fn compose_view_storage_prelude(body: &str, prog: &CgProgram) -> String {
     seen_view_ids.extend(view_get_seen.iter().copied());
     seen_view_ids.extend(view_nearest_seen.iter().copied());
     seen_view_ids.extend(view_dir_seen.iter().copied());
-    if seen_view_ids.is_empty() {
+    // A kernel that reads a `@per_entity_ring` struct field
+    // (`view_<id>_field_<F>_get(`) but never calls the plain
+    // `view_<id>_get(`/`_nearest(`/`_dir_away_from_nearest(` forms
+    // leaves `seen_view_ids` empty — those three are the ONLY shapes
+    // the scan above recognizes. Without this check the early return
+    // below fires before the ring-field-read scan further down ever
+    // runs, so a field-read-only kernel (e.g. `ring_field_read_probe`'s
+    // `ReadBackCells`) silently gets no prelude at all: the call sites
+    // and binding are correctly emitted elsewhere, but the helper
+    // function definition itself never lands in the file, and naga
+    // fails at pipeline creation with "no definition in scope."
+    let has_ring_field_reads = {
+        let mut sp = 0;
+        let mut found = false;
+        while let Some(rel) = body[sp..].find("view_") {
+            let abs = sp + rel;
+            let after = &body[abs + 5..];
+            let id_end = after.bytes().take_while(|b| b.is_ascii_digit()).count();
+            sp = abs + 5 + id_end.max(1);
+            if id_end == 0 {
+                continue;
+            }
+            let suffix = &after[id_end..];
+            if let Some(after_field) = suffix.strip_prefix("_field_") {
+                let fnum_len = after_field.bytes().take_while(u8::is_ascii_digit).count();
+                if fnum_len > 0 && after_field[fnum_len..].starts_with("_get(") {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+    if seen_view_ids.is_empty() && !has_ring_field_reads {
         return String::new();
     }
     // Pre-resolve per-view shape so each helper-emit branch can
@@ -1728,6 +1761,76 @@ fn compose_view_storage_prelude(body: &str, prog: &CgProgram) -> String {
             }
         }
     }
+
+    // Read side of `@per_entity_ring` struct-payload storage
+    // (`BuiltinId::RingFieldRead`, `<ring_view_name>.<field>(key,
+    // index)`). Independent scan from the per-view loop above: one
+    // helper per (view, field) pair actually referenced, not one per
+    // view — a struct cell can have several fields, each read
+    // separately and each needing its own function since WGSL has no
+    // generic "return the Nth word as the right type" primitive.
+    {
+        let mut seen: BTreeSet<(u32, u16)> = BTreeSet::new();
+        let mut search_pos = 0;
+        while let Some(rel) = body[search_pos..].find("view_") {
+            let abs = search_pos + rel;
+            let after = &body[abs + 5..];
+            let id_end = after.bytes().take_while(|b| b.is_ascii_digit()).count();
+            search_pos = abs + 5 + id_end.max(1);
+            if id_end == 0 {
+                continue;
+            }
+            let suffix = &after[id_end..];
+            let Some(after_field) = suffix.strip_prefix("_field_") else { continue };
+            let fnum_len = after_field.bytes().take_while(u8::is_ascii_digit).count();
+            if fnum_len == 0 || !after_field[fnum_len..].starts_with("_get(") {
+                continue;
+            }
+            let (Ok(view_id), Ok(field_offset)) =
+                (after[..id_end].parse::<u32>(), after_field[..fnum_len].parse::<u16>())
+            else {
+                continue;
+            };
+            if !seen.insert((view_id, field_offset)) {
+                continue;
+            }
+            let view_name = prog
+                .interner
+                .get_view_name(crate::cg::data_handle::ViewId(view_id))
+                .unwrap_or("unnamed_view");
+            let sig = prog.view_signatures.get(&view_id);
+            let k = sig.and_then(|s| match s.storage_hint {
+                Some(crate::cg::program::CgStorageHint::PerEntityRing { k }) => Some(k as u32),
+                _ => None,
+            });
+            let layout = prog.view_layouts.get(&view_id);
+            let field_count = layout.map(|l| l.fields.len() as u32).unwrap_or(1);
+            let field_ty = layout.and_then(|l| l.fields.get(field_offset as usize)).map(|f| f.ty);
+            // `k`/`layout` absent means the source didn't actually
+            // satisfy `RingFieldRead`'s lowering-time gate — lowering
+            // already rejects that (`RingFieldReadRequiresPerEntityRing`
+            // / `RingFieldReadOnScalarRing`), so reaching here with
+            // either missing would mean a caller built CG by hand
+            // bypassing `lower_ring_field_read`. Default to a k=1,
+            // u32 shape rather than panicking mid-emit — matches this
+            // file's existing "sentinel, not a hard failure" convention
+            // for defensive fallbacks (see the `view_{id}_nearest`
+            // sentinel stub above).
+            let k = k.unwrap_or(1);
+            let is_f32 = matches!(field_ty, Some(crate::cg::expr::CgTy::F32));
+            let ret_ty = if is_f32 { "f32" } else { "u32" };
+            let read_expr = format!(
+                "view_storage_{view_name}_primary[(key * {k}u + (index % {k}u)) * {field_count}u + {field_offset}u]"
+            );
+            let body_expr = if is_f32 { format!("bitcast<f32>({read_expr})") } else { read_expr };
+            out.push_str(&format!(
+                "fn view_{view_id}_field_{field_offset}_get(key: u32, index: u32) -> {ret_ty} {{\n\
+                 \x20   return {body_expr};\n\
+                 }}\n"
+            ));
+        }
+    }
+
     out
 }
 

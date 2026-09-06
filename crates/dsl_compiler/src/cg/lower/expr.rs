@@ -665,6 +665,9 @@ pub fn lower_expr(ast: &IrExprNode, ctx: &mut LoweringCtx<'_>) -> Result<CgExprI
         // ---- Calls ----
         IrExpr::BuiltinCall(b, args) => lower_builtin_call(*b, args, span, ctx),
         IrExpr::ViewCall(view_ref, args) => lower_view_call(*view_ref, args, span, ctx),
+        IrExpr::RingFieldRead(view_ref, field, args) => {
+            lower_ring_field_read(*view_ref, field, args, span, ctx)
+        }
         IrExpr::NamespaceCall { ns, method, args } => {
             lower_namespace_call(*ns, method.as_str(), args, span, ctx)
         }
@@ -2549,6 +2552,99 @@ fn expect_arity(
 /// `ViewKey { view }` (Phase 1's chosen phantom) and the type checker
 /// surfaces an unresolved-signature error if a downstream consumer
 /// requires the concrete shape.
+/// `<ring_view_name>.<field_name>(key, index)` — the read side of
+/// `@per_entity_ring` struct-payload storage. Requires:
+///   - the view resolves and its storage hint is `PerEntityRing { k }`
+///     (checked against `ctx.view_storage_hints`, populated by the
+///     driver for every view before ANY physics/verb body lowers —
+///     `lower_all_views` runs before `lower_all_physics`, so this is
+///     always present by the time a consumer reaches here);
+///   - the view has a registered struct-cell `ViewLayout` (populated by
+///     THAT SAME view's own `self.append(...)` lowering, which — same
+///     ordering guarantee — has already run);
+///   - `field` names one of that layout's fields;
+///   - exactly 2 args (`key`, `index`).
+/// Lowers to `BuiltinId::RingFieldRead`, which resolves the exact
+/// storage index (`key * k + (index % k)) * field_count + field_offset`)
+/// at WGSL-emit time — mirroring the write side's own
+/// `self.append(...)` indexing (`fold_recent_damage_records.wgsl`)
+/// exactly, so a read and a write of the same cell never disagree
+/// about layout.
+fn lower_ring_field_read(
+    ast_ref: AstViewRef,
+    field: &str,
+    args: &[IrCallArg],
+    span: Span,
+    ctx: &mut LoweringCtx<'_>,
+) -> Result<CgExprId, LoweringError> {
+    let view_id = *ctx
+        .view_ids
+        .get(&ast_ref)
+        .ok_or(LoweringError::UnknownView { ast_ref, span })?;
+
+    let k = match ctx.view_storage_hints.get(&view_id) {
+        Some(crate::cg::program::CgStorageHint::PerEntityRing { k }) => *k,
+        Some(crate::cg::program::CgStorageHint::PairMap) => {
+            return Err(LoweringError::RingFieldReadRequiresPerEntityRing {
+                view: view_id,
+                hint_label: "pair_map",
+                span,
+            });
+        }
+        Some(crate::cg::program::CgStorageHint::SingleKey) | None => {
+            return Err(LoweringError::RingFieldReadRequiresPerEntityRing {
+                view: view_id,
+                hint_label: "single_key (per_entity_topk / symmetric_pair_topk / lazy_cached)",
+                span,
+            });
+        }
+    };
+
+    let layout = ctx.builder.view_layout(view_id).ok_or(LoweringError::RingFieldReadOnScalarRing {
+        view: view_id,
+        span,
+    })?;
+    let field_count = layout.fields.len();
+    let (field_offset, field_ty) = layout
+        .fields
+        .iter()
+        .position(|f| f.name == field)
+        .map(|pos| (pos, layout.fields[pos].ty))
+        .ok_or_else(|| LoweringError::RingFieldReadUnknownField {
+            view: view_id,
+            field: field.to_string(),
+            known_fields: layout.fields.iter().map(|f| f.name.clone()).collect(),
+            span,
+        })?;
+
+    if args.len() != 2 {
+        return Err(LoweringError::RingFieldReadArityMismatch {
+            view: view_id,
+            field: field.to_string(),
+            got: args.len(),
+            span,
+        });
+    }
+    let key_id = lower_expr(&args[0].value, ctx)?;
+    let index_id = lower_expr(&args[1].value, ctx)?;
+
+    add(
+        ctx,
+        CgExpr::Builtin {
+            fn_id: BuiltinId::RingFieldRead {
+                view: view_id,
+                field_offset: field_offset as u16,
+                field_count: field_count as u16,
+                k,
+                result_ty: field_ty,
+            },
+            args: vec![key_id, index_id],
+            ty: field_ty,
+        },
+        span,
+    )
+}
+
 fn lower_view_call(
     ast_ref: AstViewRef,
     args: &[IrCallArg],
@@ -2694,6 +2790,17 @@ fn substitute_locals(
         ),
         IrExpr::ViewCall(vr, args) => IrExpr::ViewCall(
             *vr,
+            args.iter()
+                .map(|a| IrCallArg {
+                    name: a.name.clone(),
+                    value: substitute_locals(&a.value, binders),
+                    span: a.span,
+                })
+                .collect(),
+        ),
+        IrExpr::RingFieldRead(vr, field, args) => IrExpr::RingFieldRead(
+            *vr,
+            field.clone(),
             args.iter()
                 .map(|a| IrCallArg {
                     name: a.name.clone(),

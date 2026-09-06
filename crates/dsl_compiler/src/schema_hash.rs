@@ -743,6 +743,16 @@ fn hash_expr_kind(h: &mut Sha256, kind: &IrExpr) {
                 hash_expr(h, &a.value);
             }
         }
+        IrExpr::RingFieldRead(r, field, args) => {
+            h.update([0x48u8]);
+            h.update(&r.0.to_le_bytes());
+            h.update(field.as_bytes());
+            h.update([0u8]);
+            h.update(&(args.len() as u32).to_le_bytes());
+            for a in args {
+                hash_expr(h, &a.value);
+            }
+        }
         IrExpr::VerbCall(r, args) => {
             h.update([0x30u8]);
             h.update(&r.0.to_le_bytes());

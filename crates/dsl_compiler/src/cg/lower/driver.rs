@@ -2510,6 +2510,17 @@ fn walk_substitute(node: &IrExprNode, value_args: &[IrCallArg]) -> IrExprNode {
                 })
                 .collect(),
         ),
+        IrExpr::RingFieldRead(vr, field, args) => IrExpr::RingFieldRead(
+            *vr,
+            field.clone(),
+            args.iter()
+                .map(|a| IrCallArg {
+                    name: a.name.clone(),
+                    value: walk_substitute(&a.value, value_args),
+                    span: a.span,
+                })
+                .collect(),
+        ),
         IrExpr::VerbCall(vr, args) => IrExpr::VerbCall(
             *vr,
             args.iter()

@@ -1,0 +1,74 @@
+// ring_field_read_probe — the load-bearing proof for the NEW read-side
+// primitive: `<ring_view_name>.<field_name>(key, index)`, reading a
+// `@per_entity_ring` struct-payload cell from OUTSIDE that view's own
+// fold body (an ordinary physics rule here). Everything up to this
+// fixture only proved the WRITE side (`self.append(...)`,
+// per_entity_ring_probe / per_entity_ring_struct_probe); nothing
+// anywhere could read a ring's cells back until this session.
+//
+// Reuses per_entity_ring_struct_probe's exact write shape (InjectDamage
+// -> recent_damage_records, a K=4 ring of (timestamp: u32, amount: f32)
+// cells) so its already-proven wraparound values are the known-good
+// baseline: after 7 appends, cells are
+//   [0]=(5, 60.0) [1]=(6, 70.0) [2]=(7, 80.0) [3]=(4, 50.0)
+//
+// ReadBackCells copies four specific (field, index) reads into plain
+// scalar fields every tick, so a host-side pin can assert the read
+// primitive returns EXACTLY what the write side is independently known
+// to have stored — proving key composition, index-mod-K wraparound
+// addressing, per-field byte offset, and the f32/u32 bitcast decision
+// all agree between the write path and this brand new read path.
+
+event Tick { }
+event Damaged { source: AgentId, target: AgentId, amount: f32 }
+
+entity Subject : Agent { }
+
+config inject {
+  inject_at_tick: u32 = 0,
+  inject_base:    f32 = 10.0,
+  inject_step:    f32 = 10.0,
+}
+
+@phase(per_agent)
+physics InjectDamage {
+  on Tick {} where (self.alive && world.tick >= config.inject.inject_at_tick) {
+    emit Damaged {
+      source: self,
+      target: self,
+      amount: config.inject.inject_base + ((world.tick - config.inject.inject_at_tick) * 1.0) * config.inject.inject_step,
+    }
+  }
+}
+
+@materialized(on_event = [Damaged])
+@per_entity_ring(K = 4)
+view recent_damage_records(target: Agent) -> f32 {
+  initial: 0.0,
+  on Damaged { source: _, target: t, amount: a } {
+    let now = world.tick
+    self.append(timestamp: now, amount: a)
+  }
+}
+
+// Read-side fields: one pair per (field, index) probed. Cell 0 and cell
+// 3 are the two cells whose values are unambiguous regardless of
+// exactly how many appends have landed by the read tick (cell 3 only
+// ever holds the 4th append's value until a 8th append would touch it
+// again; cell 0 holds the 1st append until the 5th overwrites it) —
+// picked so the pin can assert against values that don't depend on
+// hitting an exact tick count.
+field read_cell0_timestamp: u32
+field read_cell0_amount:    f32
+field read_cell3_timestamp: u32
+field read_cell3_amount:    f32
+
+@phase(per_agent)
+physics ReadBackCells {
+  on Tick {} where (self.alive) {
+    agents.set_read_cell0_timestamp(self, recent_damage_records.timestamp(self, 0u));
+    agents.set_read_cell0_amount(self, recent_damage_records.amount(self, 0u));
+    agents.set_read_cell3_timestamp(self, recent_damage_records.timestamp(self, 3u));
+    agents.set_read_cell3_amount(self, recent_damage_records.amount(self, 3u));
+  }
+}

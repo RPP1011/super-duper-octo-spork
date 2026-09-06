@@ -546,6 +546,27 @@ pub enum BuiltinId {
     /// enclosing `CgExpr::Builtin { ty }` field.
     ViewCall { view: ViewId },
 
+    /// `<ring_view_name>.<field_name>(key, index)` — the read side of
+    /// `@per_entity_ring` struct-payload storage, from OUTSIDE that
+    /// view's own fold body. `field_offset`/`field_count` locate the
+    /// field within the cell (`ring_idx * field_count + field_offset`,
+    /// the exact stride the write side already uses — see
+    /// `fold_recent_damage_records.wgsl`'s `self.append` emission); `k`
+    /// is the ring's declared capacity (`ring_idx = key * k + (index %
+    /// k)`); `result_ty` is resolved once, at lowering time, from the
+    /// view's registered `ViewLayout` (populated by that SAME view's
+    /// own `self.append` lowering, which runs first — `lower_all_views`
+    /// precedes `lower_all_physics`) — carried here the same way
+    /// `Min(t)`/`Max(t)`/`Clamp(t)` carry their type parameter, so
+    /// `.signature()` needs no extra context to answer.
+    RingFieldRead {
+        view: ViewId,
+        field_offset: u16,
+        field_count: u16,
+        k: u16,
+        result_ty: CgTy,
+    },
+
     /// Plan G G3f follow-up — `threats.nearest(observer)` ring-walk
     /// reduction. Lowers to a per-view helper `view_<id>_nearest` that
     /// walks the per-observer ring of struct cells, tracks the live
@@ -679,6 +700,15 @@ impl BuiltinId {
                 result: CgTy::AgentId,
             },
             ViewCall { view } => BuiltinSignature::ViewCall { view },
+            // `self` (and most natural ring keys) are `AgentId`-typed,
+            // not plain `U32` — found empirically (a physics rule
+            // calling `ring.field(self, i)` was silently dropped from
+            // the schedule with an "expected u32, got agent_id"
+            // diagnostic before this fix).
+            RingFieldRead { result_ty, .. } => BuiltinSignature::Fixed {
+                args: vec![CgTy::AgentId, CgTy::U32],
+                result: result_ty,
+            },
             ThreatsNearest { view: _ } => BuiltinSignature::Fixed {
                 args: vec![CgTy::AgentId],
                 result: CgTy::AgentId,
@@ -738,6 +768,7 @@ impl BuiltinId {
             Log10 => "log10".to_string(),
             Entity => "entity".to_string(),
             ViewCall { view } => format!("view_call.#{}", view.0),
+            RingFieldRead { view, field_offset, .. } => format!("ring_field_read.#{}.{field_offset}", view.0),
             ThreatsNearest { view } => format!("threats_nearest.#{}", view.0),
             ThreatsDirAwayFromNearest { view } => {
                 format!("threats_dir_away_from_nearest.#{}", view.0)

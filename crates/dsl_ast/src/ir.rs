@@ -257,6 +257,16 @@ pub enum IrExpr {
     Index(Box<IrExprNode>, Box<IrExprNode>),
     // Function calls split by resolved callee kind.
     ViewCall(ViewRef, Vec<IrCallArg>),
+    /// `<ring_view_name>.<field_name>(<key_expr>, <index_expr>)` — an
+    /// indexed read of one field of one cell of a `@per_entity_ring`
+    /// view's struct-payload storage, from OUTSIDE that view's own fold
+    /// body (an ordinary physics/verb body). `field` is resolved to a
+    /// byte/word OFFSET at CG-lowering time against the view's
+    /// registered `ViewLayout` (populated by that view's OWN
+    /// `self.append(...)` lowering) — resolve-time only carries the
+    /// field NAME since the layout isn't known until the view's fold
+    /// body is lowered. `args` is exactly `[key, index]`.
+    RingFieldRead(ViewRef, String, Vec<IrCallArg>),
     VerbCall(VerbRef, Vec<IrCallArg>),
     BuiltinCall(Builtin, Vec<IrCallArg>),
     /// Call whose callee couldn't be resolved at this pass — kept for 1b.

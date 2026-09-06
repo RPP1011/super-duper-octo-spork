@@ -1080,7 +1080,18 @@ pub fn kernel_topology_to_spec_and_body(
             let is_dir = suffix.starts_with("_dir_away_from_nearest(");
             let is_get = !is_dir && suffix.starts_with("_get(");
             let is_nearest = !is_dir && suffix.starts_with("_nearest(");
-            if id_end > 0 && (is_get || is_nearest || is_dir) {
+            // `view_<id>_field_<F>_get(` — the ring-field-read primitive
+            // (`BuiltinId::RingFieldRead`). Same storage binding as
+            // `_get(`; no `agent_pos` need (it's a pure indexed memory
+            // read, not a distance computation), so it's kept out of
+            // the `is_nearest`/`is_dir` ring-walk group below.
+            let is_field_get = !is_dir && !is_get && !is_nearest && {
+                suffix.strip_prefix("_field_").is_some_and(|after_field| {
+                    let fnum_len = after_field.bytes().take_while(u8::is_ascii_digit).count();
+                    fnum_len > 0 && after_field[fnum_len..].starts_with("_get(")
+                })
+            };
+            if id_end > 0 && (is_get || is_nearest || is_dir || is_field_get) {
                 if let Ok(view_id) = after[..id_end].parse::<u32>() {
                     if is_nearest || is_dir {
                         needs_agent_pos = true;

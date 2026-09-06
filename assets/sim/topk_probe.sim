@@ -1,0 +1,69 @@
+// topk_probe — spike: does `@materialized(storage = per_entity_topk(K =
+// N))` actually work end to end (compile -> WGSL -> real GPU behavior),
+// or is it type-system-only plumbing that's never been exercised?
+//
+// Evidence going in, all pointing the same direction:
+//   - No `.sim` fixture anywhere in this repo declares `per_entity_topk`
+//     storage.
+//   - The only test lowering `StorageHint::PerEntityTopK` is a white-box
+//     compiler unit test checking IR SHAPE, not a compiled/executed
+//     kernel (`crates/dsl_compiler/src/cg/lower/view.rs`,
+//     `lowers_single_fold_handler_to_view_fold_op`).
+//   - That same test (and the other in-source examples of a
+//     `PerEntityTopK` view) use a PLAIN `self += 1.0` scalar-accumulate
+//     fold body — the exact same shape `pair_map` uses. There is no
+//     "insert this scored key into my top-K list" fold-body form
+//     visible anywhere (`self.slot[i] = ...`-style ring/list append).
+//   - A closely-related design doc (`docs/plans/g3_threats_view_design.md`,
+//     status: design-only) explicitly says the ring-append fold body
+//     doesn't exist yet ("the fold body's `self += <expr>` form is
+//     wrong shape... that's a multi-statement ring-append primitive,
+//     not a scalar accumulate").
+//
+// So: does `per_entity_topk(K=4)` storage on an ordinary scalar-fold
+// view even compile? And if it does, does the RUNTIME actually keep the
+// top-4 highest-scoring subjects per observer, or does "K" turn out to
+// be cosmetic / a no-op / silently wrong?
+//
+// ANSWER (crates/sims/tests — checked directly against the emitted
+// WGSL, no pin needed, the shader is the proof): it compiles clean,
+// zero diagnostics, and it is WRONG — worse than absent. `fold_esteem`
+// (the emitted kernel) dispatches one thread per `observer_slot` and
+// keeps exactly ONE `accum: f32`, indexed ONLY by that slot. `subject`
+// (the view's second param) is read off the event (`local_1`) and used
+// only as the fold's MATCH CONDITION, never as a storage index — so
+// every `Scored` event for a given observer, regardless of subject,
+// accumulates into the SAME single cell. "K" appears nowhere in the
+// generated shader: no per-slot array, no insert, no compare, no
+// truncate. The declared `K = 4` is silently discarded.
+//
+// Worse: the buffer IS allocated at full `agent_cap * agent_cap * 4`
+// bytes (`runtime_core.rs`'s `view_storage_esteem_primary_buf`) — the
+// SAME size as an ordinary `pair_map`, i.e. the one thing `per_entity_
+// topk`'s bounded-memory promise exists for is not even honored at the
+// allocation level. It costs full O(N^2) memory and computes a
+// different, wrong quantity (a per-observer sum across every subject,
+// not a per-observer top-K by subject) with zero warning either way.
+//
+// Conclusion: `per_entity_topk` is not a usable primitive today.
+// Building the ring-buffer/multi-timescale memory design on top of it
+// would require real engine work first (matching
+// `docs/plans/g3_threats_view_design.md`'s own gap list: struct-payload
+// cells, a real ring-append fold body, a per-agent-pair dispatch shape
+// for view-folds, expiry) — not just a `.sim`-level declaration.
+
+event Tick { }
+event Scored { observer: AgentId, subject: AgentId, amount: f32 }
+
+entity Watcher : Agent {
+  pos: vec3,
+}
+
+@materialized(on_event = [Scored], storage = per_entity_topk(K = 4))
+view esteem(observer: Agent, subject: Agent) -> f32 {
+  initial: 0.0,
+  on Scored { observer: o, subject: s, amount: a }
+    where (o == observer) && (s == subject)
+    { self += a }
+  clamp: [0.0, 1000000.0],
+}

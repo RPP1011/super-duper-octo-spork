@@ -46,6 +46,7 @@ fn main() {
             "threat_impact"
                 | "belief_read_probe"
                 | "verb_belief_score_probe"
+                | "topk_probe"
                 | "boids"
                 | "cooldown_probe"
                 | "for_each_agent_probe"

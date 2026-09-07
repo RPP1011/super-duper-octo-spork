@@ -290,6 +290,18 @@ pub fn kernel_topology_to_spec_and_body(
         .collect::<Result<Vec<_>, _>>()?;
     let class = classify_kernel(&body_ops_resolved, prog);
 
+    // 2b. Self-write + cross-read hazard fields for this kernel body
+    //     (see `cg::op::self_write_cross_read_hazard_fields`). Always
+    //     empty for ViewFold / BeliefSocialMerge kernels (both are
+    //     `on_event: Some(...)`-dispatched, never `PhysicsRule{on_event:
+    //     None}`), so the early-return branches below never need it;
+    //     the generic (physics/scoring) path uses it to stash
+    //     `ctx.hazard_shadow_fields` for the body emit and to append
+    //     the matching `agent_<field>_prev` shadow bindings.
+    let hazard_fields = crate::cg::op::self_write_cross_read_hazard_fields(
+        body_ops_resolved.iter().copied(),
+    );
+
     // 3. Pick a semantic kernel name aligned with the legacy emitter
     //    filenames (`fused_mask`, `scoring`, `fold_<view>`, ...). See
     //    `semantic_kernel_name` for the full mapping table.
@@ -728,6 +740,31 @@ pub fn kernel_topology_to_spec_and_body(
         });
     }
 
+    // 8b. Self-write + cross-read hazard shadow bindings (step 2b).
+    //     One `agent_<field>_prev` ReadStorage binding per hazard
+    //     field, same `wgsl_ty` as the live `agent_<field>` binding.
+    //     `build_helper.rs`'s generic owned-buffer machinery allocates
+    //     + wires the matching `agent_<field>_prev_buf` runtime field
+    //     automatically (name-driven, same path any other non-standard
+    //     `agent_*` binding takes) and inserts the per-tick refresh
+    //     `copy_buffer_to_buffer` immediately before THIS kernel's
+    //     dispatch (see `build_helper::synthesize_runtime_core_a2`'s
+    //     hazard-copy block).
+    for field in &hazard_fields {
+        let name = format!("agent_{}_prev", field.snake());
+        if bindings.iter().any(|b| b.name == name) {
+            continue;
+        }
+        let slot = bindings.len() as u32;
+        bindings.push(KernelBinding {
+            slot,
+            name: name.clone(),
+            access: AccessMode::ReadStorage,
+            wgsl_ty: agent_field_wgsl_ty(field.ty()),
+            bg_source: BgSource::External(name),
+        });
+    }
+
     // 9. Build the cfg struct decl + cfg-construction expression — per
     //    classified kind. ViewFold is handled above; ALL PerEvent-
     //    dispatched physics rules need the same `event_count + tick`
@@ -887,6 +924,31 @@ pub fn kernel_topology_to_spec_and_body(
         }
     }
 
+    // Claim-CAS atomic upgrade: when the kernel body contains the
+    // non-atomic check-then-set exclusivity hazard on a u32/bool field
+    // (`if (agents.claimed(t) == 0u) { …; agents.set_claimed(t, 1u);
+    // … }` — see `cg::emit::wgsl_body::stmt_list_collect_u32_claim_cas_fields`
+    // + `try_emit_claim_cas_if`), upgrade every such field's
+    // `agent_<f>` binding to AtomicStorage. General over ALL
+    // AgentFieldId variants (including `Custom` — the fixture-declared
+    // `field claimed: u32` shape this was found against), unlike the
+    // f32 RMW upgrade above which iterates a fixed built-in list: a
+    // custom field has no compile-time-enumerable identity to put in
+    // such a list, so the field set itself (not a bitset over one) is
+    // the binding-upgrade key.
+    let claim_cas_fields = body_ops_collect_u32_claim_cas_fields(&body_ops, prog);
+    for field in &claim_cas_fields {
+        let binding_name = format!("agent_{}", field.snake());
+        for binding in bindings.iter_mut() {
+            if binding.name == binding_name
+                && matches!(binding.access, AccessMode::ReadStorage | AccessMode::ReadWriteStorage)
+            {
+                binding.access = AccessMode::AtomicStorage;
+                binding.wgsl_ty = "u32".to_string();
+            }
+        }
+    }
+
     // 10. Compose the WGSL body — one fragment per op, joined with
     //     blank lines. Computing the body here surfaces any inner-walk
     //     arena failures as typed errors before the spec is returned,
@@ -918,7 +980,22 @@ pub fn kernel_topology_to_spec_and_body(
     let prior_f32_atomic_writes = ctx
         .f32_atomic_field_writes
         .replace(f32_atomic_writes_bits);
+    // Stash the per-kernel self-write + cross-read hazard field set
+    // (see step 2b above). `agent_field_read_wgsl` and the tiled-
+    // PerCell preamble both consult this during the body emit to
+    // redirect cross-agent reads of a hazard field to its pre-tick
+    // shadow buffer; restore on exit so the same EmitCtx instance can
+    // drive multiple kernels safely.
+    let prior_hazard_fields = ctx.hazard_shadow_fields.replace(hazard_fields.clone());
+    // Stash the per-kernel claim-CAS field set (computed above for the
+    // binding upgrade). `CgStmt::If`'s `try_emit_claim_cas_if`, the
+    // Assign arm, and `agent_field_read_wgsl` all consult this during
+    // the body emit; restore on exit so the same EmitCtx instance can
+    // drive multiple kernels safely.
+    let prior_claim_cas_fields = ctx.claim_cas_fields.replace(claim_cas_fields.clone());
     let wgsl_body_result = build_wgsl_body(&body_ops, &dispatch, prog, ctx);
+    ctx.claim_cas_fields.replace(prior_claim_cas_fields);
+    ctx.hazard_shadow_fields.replace(prior_hazard_fields);
     ctx.f32_atomic_field_writes.set(prior_f32_atomic_writes);
     ctx.alive_atomic_writes.set(prior_alive_cas);
     ctx.event_ring_atomic_loads.set(prior_atomic_loads);
@@ -4001,6 +4078,38 @@ fn body_ops_collect_f32_atomic_writes(body_ops: &[OpId], prog: &CgProgram) -> u6
     bits
 }
 
+/// Walk every body op's statement list and union the set of u32/bool
+/// [`crate::cg::data_handle::AgentFieldId`]s exhibiting the claim-CAS
+/// check-then-set exclusivity hazard — see
+/// [`crate::cg::emit::wgsl_body::stmt_list_collect_u32_claim_cas_fields`]
+/// for the exact shape. General over `AgentFieldId::Custom` (unlike
+/// [`body_ops_collect_f32_atomic_writes`]'s fixed built-in bitset), so
+/// a `BTreeSet` rather than a bit index is the right accumulator here.
+fn body_ops_collect_u32_claim_cas_fields(
+    body_ops: &[OpId],
+    prog: &CgProgram,
+) -> std::collections::BTreeSet<crate::cg::data_handle::AgentFieldId> {
+    let mut fields = std::collections::BTreeSet::new();
+    for op_id in body_ops {
+        let Ok(op) = resolve_op(prog, *op_id) else {
+            continue;
+        };
+        let body_list = match &op.kind {
+            ComputeOpKind::PhysicsRule { body, .. } => Some(*body),
+            ComputeOpKind::ViewFold { body, .. } => Some(*body),
+            _ => None,
+        };
+        if let Some(list_id) = body_list {
+            fields.extend(
+                crate::cg::emit::wgsl_body::stmt_list_collect_u32_claim_cas_fields(
+                    prog, list_id,
+                ),
+            );
+        }
+    }
+    fields
+}
+
 /// Plan G tunable cfg — collect every runtime-tunable
 /// [`crate::cg::data_handle::ConfigConstId`] referenced (via reads) by
 /// `body_ops`. Returns ascending-id order so emitted cfg layouts are
@@ -5029,7 +5138,11 @@ fn build_wgsl_body(
     // the runtime cooperative-load loop + `workgroupBarrier` + per-
     // lane home-cell bounds check + agent_id fetch.
     if matches!(dispatch, DispatchShape::PerCell) {
-        write!(out, "{}", tiled_per_cell_preamble())
+        let hazard = ctx.hazard_shadow_fields.borrow();
+        let pos_prev = hazard.contains(&crate::cg::data_handle::AgentFieldId::Pos);
+        let vel_prev = hazard.contains(&crate::cg::data_handle::AgentFieldId::Vel);
+        drop(hazard);
+        write!(out, "{}", tiled_per_cell_preamble(pos_prev, vel_prev))
             .expect("write to String never fails");
     }
 
@@ -5149,7 +5262,21 @@ fn build_wgsl_body(
 /// Each lane in `27..MAX_PER_CELL` participates in the load (no-op
 /// branches just skip), then the home-cell bounds check filters them
 /// out before any sim work.
-fn tiled_per_cell_preamble() -> String {
+///
+/// `pos_prev` / `vel_prev` — self-write + cross-read hazard shadowing
+/// (see [`crate::cg::op::self_write_cross_read_hazard_fields`] and
+/// [`EmitCtx::hazard_shadow_fields`]). The cooperative load below is
+/// the ONE place the tiled kernel reads `agent_pos`/`agent_vel` from
+/// global memory — every subsequent `Read(AgentField{Pos|Vel,
+/// PerPairCandidate})` in the body redirects to the workgroup-local
+/// `tile_pos`/`tile_vel` array instead (see the `tile_walk_index`
+/// substitution in `wgsl_body.rs`), bypassing `agent_field_read_wgsl`'s
+/// own hazard redirect entirely. So when Pos/Vel is a hazard field for
+/// this kernel, the load itself must source the pre-tick shadow buffer
+/// (`agent_pos_prev`/`agent_vel_prev`) instead of the live buffer —
+/// otherwise a hazardous tiled kernel (the boids `MoveBoid` shape)
+/// would race regardless of the generic redirect.
+fn tiled_per_cell_preamble(pos_prev: bool, vel_prev: bool) -> String {
     // After the three-phase counting sort, `spatial_grid_starts[c]`
     // is cell `c`'s start position in `spatial_grid_cells` and
     // `starts[c+1] - starts[c]` is the cell's count. The tile-load
@@ -5162,49 +5289,52 @@ fn tiled_per_cell_preamble() -> String {
     // surfaces tile-truncation as the dropped_agents stat now
     // computed against MAX_PER_CELL, which is the right knob to
     // bump or split into multi-pass tile loads.
-    "let home_cell = workgroup_id.x;\n\
-     let lane = local_invocation_id.x;\n\
-     let home_cz = home_cell / (SPATIAL_GRID_DIM * SPATIAL_GRID_DIM);\n\
-     let home_cy = (home_cell / SPATIAL_GRID_DIM) % SPATIAL_GRID_DIM;\n\
-     let home_cx = home_cell % SPATIAL_GRID_DIM;\n\
-     // Cooperative tile load: lanes 0..27 each load one neighbor\n\
-     // cell. Lanes 27..MAX_PER_CELL skip the load (no-op).\n\
-     if (lane < 27u) {\n\
-     \x20   let nbr = lane;\n\
-     \x20   let dz = i32(nbr / 9u) - 1;\n\
-     \x20   let dy = i32((nbr / 3u) % 3u) - 1;\n\
-     \x20   let dx = i32(nbr % 3u) - 1;\n\
-     \x20   let _nbr_cell = cell_index(\n\
-     \x20       i32(home_cx) + dx,\n\
-     \x20       i32(home_cy) + dy,\n\
-     \x20       i32(home_cz) + dz,\n\
-     \x20   );\n\
-     \x20   let _nbr_start = spatial_grid_starts[_nbr_cell];\n\
-     \x20   let _nbr_end = spatial_grid_starts[_nbr_cell + 1u];\n\
-     \x20   let _nbr_count = min(_nbr_end - _nbr_start, SPATIAL_MAX_PER_CELL);\n\
-     \x20   tile_count[nbr] = _nbr_count;\n\
-     \x20   let _dst_base = nbr * SPATIAL_MAX_PER_CELL;\n\
-     \x20   for (var i: u32 = 0u; i < _nbr_count; i = i + 1u) {\n\
-     \x20       let _aid = spatial_grid_cells[_nbr_start + i];\n\
-     \x20       tile_pos[_dst_base + i] = agent_pos[_aid];\n\
-     \x20       tile_vel[_dst_base + i] = agent_vel[_aid];\n\
-     \x20   }\n\
-     }\n\
-     workgroupBarrier();\n\
-     let _home_start = spatial_grid_starts[home_cell];\n\
-     let _home_end = spatial_grid_starts[home_cell + 1u];\n\
-     let _home_count = _home_end - _home_start;\n\
-     // Multi-iteration home-agent loop: each lane processes home\n\
-     // agents at offsets `{lane, lane + WG, lane + 2*WG, ...}` up to\n\
-     // _home_count. With workgroup_size = MAX_PER_CELL = 32 and a\n\
-     // home cell holding (say) 94 agents, lane 0 sees agents\n\
-     // {0, 32, 64}, lane 1 sees {1, 33, 65}, etc. — every home\n\
-     // agent gets processed regardless of cell density. The matching\n\
-     // close brace is appended by `build_wgsl_body`'s tail when\n\
-     // the dispatch is PerCell.\n\
-     for (var _home_iter: u32 = lane; _home_iter < _home_count; _home_iter = _home_iter + SPATIAL_MAX_PER_CELL) {\n\
-     let agent_id = spatial_grid_cells[_home_start + _home_iter];\n\n"
-        .to_string()
+    let pos_src = if pos_prev { "agent_pos_prev" } else { "agent_pos" };
+    let vel_src = if vel_prev { "agent_vel_prev" } else { "agent_vel" };
+    format!(
+        "let home_cell = workgroup_id.x;\n\
+         let lane = local_invocation_id.x;\n\
+         let home_cz = home_cell / (SPATIAL_GRID_DIM * SPATIAL_GRID_DIM);\n\
+         let home_cy = (home_cell / SPATIAL_GRID_DIM) % SPATIAL_GRID_DIM;\n\
+         let home_cx = home_cell % SPATIAL_GRID_DIM;\n\
+         // Cooperative tile load: lanes 0..27 each load one neighbor\n\
+         // cell. Lanes 27..MAX_PER_CELL skip the load (no-op).\n\
+         if (lane < 27u) {{\n\
+         \x20   let nbr = lane;\n\
+         \x20   let dz = i32(nbr / 9u) - 1;\n\
+         \x20   let dy = i32((nbr / 3u) % 3u) - 1;\n\
+         \x20   let dx = i32(nbr % 3u) - 1;\n\
+         \x20   let _nbr_cell = cell_index(\n\
+         \x20       i32(home_cx) + dx,\n\
+         \x20       i32(home_cy) + dy,\n\
+         \x20       i32(home_cz) + dz,\n\
+         \x20   );\n\
+         \x20   let _nbr_start = spatial_grid_starts[_nbr_cell];\n\
+         \x20   let _nbr_end = spatial_grid_starts[_nbr_cell + 1u];\n\
+         \x20   let _nbr_count = min(_nbr_end - _nbr_start, SPATIAL_MAX_PER_CELL);\n\
+         \x20   tile_count[nbr] = _nbr_count;\n\
+         \x20   let _dst_base = nbr * SPATIAL_MAX_PER_CELL;\n\
+         \x20   for (var i: u32 = 0u; i < _nbr_count; i = i + 1u) {{\n\
+         \x20       let _aid = spatial_grid_cells[_nbr_start + i];\n\
+         \x20       tile_pos[_dst_base + i] = {pos_src}[_aid];\n\
+         \x20       tile_vel[_dst_base + i] = {vel_src}[_aid];\n\
+         \x20   }}\n\
+         }}\n\
+         workgroupBarrier();\n\
+         let _home_start = spatial_grid_starts[home_cell];\n\
+         let _home_end = spatial_grid_starts[home_cell + 1u];\n\
+         let _home_count = _home_end - _home_start;\n\
+         // Multi-iteration home-agent loop: each lane processes home\n\
+         // agents at offsets `{{lane, lane + WG, lane + 2*WG, ...}}` up to\n\
+         // _home_count. With workgroup_size = MAX_PER_CELL = 32 and a\n\
+         // home cell holding (say) 94 agents, lane 0 sees agents\n\
+         // {{0, 32, 64}}, lane 1 sees {{1, 33, 65}}, etc. — every home\n\
+         // agent gets processed regardless of cell density. The matching\n\
+         // close brace is appended by `build_wgsl_body`'s tail when\n\
+         // the dispatch is PerCell.\n\
+         for (var _home_iter: u32 = lane; _home_iter < _home_count; _home_iter = _home_iter + SPATIAL_MAX_PER_CELL) {{\n\
+         let agent_id = spatial_grid_cells[_home_start + _home_iter];\n\n"
+    )
 }
 
 // ---------------------------------------------------------------------------

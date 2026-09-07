@@ -86,10 +86,17 @@ fn target_chaser_compiles() {
 
 /// Slice 1 invariant: the cross-agent target read in
 /// `agents.pos(self.engaged_with)` lowers to a stmt-scope
-/// `let target_expr_<N>: u32 = …;` paired with `agent_pos[
-/// target_expr_<N>]`, NOT the prior B1 `vec3<f32>(0.0)` placeholder.
+/// `let target_expr_<N>: u32 = …;` paired with an indexed access on
+/// `target_expr_<N>`, NOT the prior B1 `vec3<f32>(0.0)` placeholder.
 /// Locks slice 1 into the runtime-driven (not just unit-tested)
 /// codepath.
+///
+/// `ChaseTarget` self-writes `pos` (`agents.set_pos(self, ...)`) AND
+/// cross-reads `pos` via this same target expression — the self-write
+/// + cross-read hazard (see `cg::op::self_write_cross_read_hazard_fields`).
+/// The indexed access therefore reads the pre-tick shadow buffer
+/// `agent_pos_prev[target_expr_<N>]`, not the live `agent_pos` buffer
+/// a same-dispatch self-writer could already have mutated.
 #[test]
 fn target_chaser_emits_target_let_binding() {
     let path = workspace_path("assets/sim/target_chaser.sim");
@@ -107,8 +114,8 @@ fn target_chaser_emits_target_let_binding() {
         "expected slice-1 let target_expr_<N> binding in physics body; got:\n{body}",
     );
     assert!(
-        body.contains("agent_pos[target_expr_"),
-        "expected indexed access against target_expr_<N>; got:\n{body}",
+        body.contains("agent_pos_prev[target_expr_"),
+        "expected hazard-shadowed indexed access against target_expr_<N>; got:\n{body}",
     );
     assert!(
         !body.contains("vec3<f32>(0.0)") || body.matches("vec3<f32>(0.0)").count() < 2,

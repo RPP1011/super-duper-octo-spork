@@ -733,6 +733,16 @@ pub fn emit_cg_program_with_debug(
         // CAS retry loop, no cross-thread contention on view_storage_primary.
         serial_f32_fold: std::cell::Cell::new(has_f32_add_view_fold(prog)),
         in_serial_fold_body: std::cell::Cell::new(false),
+        // Self-write + cross-read hazard: per-kernel field set, set by
+        // `kernel_topology_to_spec_and_body` before each kernel's body
+        // emit and restored on exit. Default empty preserves the
+        // existing direct `agent_<field>` read shape verbatim.
+        hazard_shadow_fields: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+        // Claim-CAS: per-kernel u32/bool field set, set by
+        // `kernel_topology_to_spec_and_body` before each kernel's body
+        // emit and restored on exit. Default empty preserves the
+        // existing plain check-then-set shape verbatim.
+        claim_cas_fields: std::cell::RefCell::new(std::collections::BTreeSet::new()),
     };
 
     for (stage_idx, stage) in schedule.stages.iter().enumerate() {

@@ -397,6 +397,53 @@ pub struct EmitCtx<'a> {
     /// `lower_cg_stmt_list_to_wgsl` call; restored to `false` on return.
     /// Default `false` preserves the existing per-event CAS path verbatim.
     pub in_serial_fold_body: std::cell::Cell<bool>,
+
+    /// Self-write + cross-read hazard fields for the kernel currently
+    /// being emitted — see
+    /// [`crate::cg::op::self_write_cross_read_hazard_fields`]. When a
+    /// field is in this set, every cross-agent read
+    /// (`Read(AgentField { field, target })` with `target != Self_`)
+    /// redirects from the live `agent_<field>` buffer to the pre-tick
+    /// shadow buffer `agent_<field>_prev` — see
+    /// [`agent_field_read_wgsl`]. Populated per-kernel by
+    /// `cg::emit::kernel::kernel_topology_to_spec_and_body` before the
+    /// body emit, restored (typically to the empty set) on exit, the
+    /// same save/restore shape as [`Self::f32_atomic_field_writes`].
+    ///
+    /// Default empty preserves the existing direct `agent_<field>`
+    /// read shape verbatim for every kernel with no hazard field.
+    pub hazard_shadow_fields: std::cell::RefCell<std::collections::BTreeSet<AgentFieldId>>,
+
+    /// Claim-CAS fields for the kernel currently being emitted — u32/
+    /// bool `AgentFieldId`s exhibiting the non-atomic check-then-set
+    /// exclusivity hazard: a `PerEvent` physics-rule body has an
+    /// `If` (no `else`) whose `cond` reads `agents.<field>(<ref>)` via
+    /// an equality comparison, and whose `then`-branch's first literal
+    /// u32/bool assign targets that SAME field — see
+    /// [`stmt_list_collect_u32_claim_cas_fields`]. Two same-tick
+    /// events racing the same target both observe the pre-write value
+    /// under a plain read/branch/write; this is the CAS analogue of
+    /// [`Self::alive_atomic_writes`] generalized from the single
+    /// built-in `alive` field to any (including custom) u32/bool
+    /// field, and from a fixed `true→false` transition to any
+    /// `expected→new` pair.
+    ///
+    /// Populated per-kernel by
+    /// `cg::emit::kernel::kernel_topology_to_spec_and_body` before the
+    /// body emit (mirrors [`Self::hazard_shadow_fields`]'s save/
+    /// restore shape). [`CgStmt::If`]'s emission consults this to
+    /// decide whether to rewrite the guard into a genuine
+    /// `atomicCompareExchangeWeak` gate (see `try_emit_claim_cas_if`);
+    /// the Assign arm and [`agent_field_read_wgsl`] consult it so
+    /// every OTHER access to an upgraded field within the same kernel
+    /// (the now-redundant literal write inside the rewritten branch,
+    /// or any incidental read elsewhere) goes through `atomicStore` /
+    /// `atomicLoad` instead of a plain indexed access — required once
+    /// the field's backing buffer is declared `array<atomic<u32>>`.
+    ///
+    /// Default empty preserves the existing plain check-then-set shape
+    /// verbatim for every kernel with no claim-CAS field.
+    pub claim_cas_fields: std::cell::RefCell<std::collections::BTreeSet<AgentFieldId>>,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -432,6 +479,8 @@ impl<'a> EmitCtx<'a> {
             intra_emit_idx: std::cell::Cell::new(0),
             serial_f32_fold: std::cell::Cell::new(false),
             in_serial_fold_body: std::cell::Cell::new(false),
+            hazard_shadow_fields: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            claim_cas_fields: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -943,6 +992,335 @@ pub(crate) fn stmt_list_collect_f32_atomic_writes(
 }
 
 // ---------------------------------------------------------------------------
+// Claim-CAS hazard: non-atomic check-then-set exclusivity
+// ---------------------------------------------------------------------------
+//
+// A `PerEvent @phase(post)` consumer that reads a shared u32/bool
+// field, branches on it, and writes a literal into the SAME field
+// inside the guarded branch (`if (agents.claimed(t) == 0u) { …;
+// agents.set_claimed(t, 1u); … }`) is a genuine compare-and-swap: "at
+// most one of N same-tick events touching the same target may win."
+// Two same-tick events targeting the same slot both read the
+// pre-write value under a plain load/branch/store, and both "win" —
+// corrupting the field non-deterministically per GPU thread
+// scheduling. This mirrors [`stmt_is_f32_const_assign`]'s "first-
+// writer-wins" f32 shape (same detection shape: cond reads field X,
+// then-branch's first literal assign writes field X) but for u32/bool
+// fields, generalized to ANY field (including custom `field`
+// declarations — [`AgentFieldId::Custom`]) rather than a fixed
+// built-in bitset, and used to gate the WHOLE branch atomically
+// (see [`try_emit_claim_cas_if`]) rather than only the statements
+// following the write — see that function's doc for why the two
+// shapes need different gating scope.
+
+/// True when `stmt` is `Assign(AgentField{u32|bool, …}, target,
+/// Lit(u32|bool))` — the claim-CAS candidate shape. Returns the field
+/// id + target ref. Mirrors [`stmt_is_f32_const_assign`].
+pub(crate) fn stmt_is_u32_const_assign(
+    prog: &CgProgram,
+    stmt: &CgStmt,
+) -> Option<(AgentFieldId, AgentRef)> {
+    let CgStmt::Assign { target, value } = stmt else {
+        return None;
+    };
+    let DataHandle::AgentField { field, target: agent_ref } = target else {
+        return None;
+    };
+    if !matches!(field.ty(), AgentFieldTy::U32 | AgentFieldTy::Bool) {
+        return None;
+    }
+    match <CgProgram as ExprArena>::get(prog, *value) {
+        Some(CgExpr::Lit(LitValue::U32(_))) | Some(CgExpr::Lit(LitValue::Bool(_))) => {
+            Some((*field, agent_ref.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Scan the TOP LEVEL of `list_id` for the first
+/// [`stmt_is_u32_const_assign`] match. Top-level only — mirrors
+/// [`stmt_list_first_f32_const_assign`]'s scoping rationale: a nested
+/// If/Match arm is its own guarded scope, detected (or not) by its own
+/// enclosing If when [`collect_u32_claim_cas_fields_into`] recurses
+/// into it independently.
+pub(crate) fn stmt_list_first_u32_const_assign(
+    prog: &CgProgram,
+    list_id: CgStmtListId,
+) -> Option<(CgStmtId, AgentFieldId)> {
+    let list = <CgProgram as StmtListArena>::get(prog, list_id)?;
+    for stmt_id in &list.stmts {
+        let stmt = <CgProgram as StmtArena>::get(prog, *stmt_id)?;
+        if let Some((field, _)) = stmt_is_u32_const_assign(prog, stmt) {
+            return Some((*stmt_id, field));
+        }
+    }
+    None
+}
+
+/// Recursive walk: collect the set of u32/bool [`AgentFieldId`]s
+/// exhibiting the claim-CAS hazard shape anywhere in the stmt list
+/// named by `list_id` — an `If` with no `else` whose `cond` reads the
+/// field (via [`expr_reads_agent_field_id`], loose target match, same
+/// rationale as the f32 gate) AND whose `then`-branch's first
+/// top-level literal assign targets that SAME field. Descends through
+/// `If`/`Match`/`ForEachNeighborBody` so a hazard nested inside an arm
+/// is found by its own immediately-enclosing `If`.
+///
+/// Deliberately narrower than [`stmt_list_collect_f32_atomic_writes`]:
+/// that pass upgrades EVERY f32 write in the body (f32 fields are a
+/// closed, hand-picked built-in list, and the CAS-loop upgrade is
+/// cheap + always safe). u32/bool fields are used pervasively across
+/// ~150 fixtures for flags/counters/enums that don't need atomics, so
+/// this collector only flags fields actually exhibiting the exact
+/// check-then-set shape — scoping the blast radius to the hazard
+/// class this fix targets. The `else`-free restriction mirrors
+/// [`try_emit_claim_cas_if`]'s (documented there): the rewrite has no
+/// sound shape for an `If` that also has an `else`.
+pub(crate) fn stmt_list_collect_u32_claim_cas_fields(
+    prog: &CgProgram,
+    list_id: CgStmtListId,
+) -> std::collections::BTreeSet<AgentFieldId> {
+    let mut out = std::collections::BTreeSet::new();
+    collect_u32_claim_cas_fields_into(prog, list_id, &mut out);
+    out
+}
+
+fn collect_u32_claim_cas_fields_into(
+    prog: &CgProgram,
+    list_id: CgStmtListId,
+    out: &mut std::collections::BTreeSet<AgentFieldId>,
+) {
+    let Some(list) = <CgProgram as StmtListArena>::get(prog, list_id) else {
+        return;
+    };
+    for stmt_id in &list.stmts {
+        let Some(stmt) = <CgProgram as StmtArena>::get(prog, *stmt_id) else {
+            continue;
+        };
+        match stmt {
+            CgStmt::If { cond, then, else_ } => {
+                if else_.is_none() {
+                    if let Some((_, field)) = stmt_list_first_u32_const_assign(prog, *then) {
+                        if expr_reads_agent_field_id(*cond, field, prog) {
+                            out.insert(field);
+                        }
+                    }
+                }
+                collect_u32_claim_cas_fields_into(prog, *then, out);
+                if let Some(e) = else_ {
+                    collect_u32_claim_cas_fields_into(prog, *e, out);
+                }
+            }
+            CgStmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_u32_claim_cas_fields_into(prog, arm.body, out);
+                }
+            }
+            CgStmt::ForEachNeighborBody { body, .. } => {
+                collect_u32_claim_cas_fields_into(prog, *body, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Flatten a left/right-nested `Binary{And, ..}` tree into its ordered
+/// list of conjunct `CgExprId`s (left to right, matching source
+/// order). A non-`And` root is a single-element list. Non-recursing
+/// into any other node kind — an `Or`, a comparison, etc. stops the
+/// flattening at that node.
+fn flatten_and_conjuncts(expr_id: CgExprId, prog: &CgProgram) -> Vec<CgExprId> {
+    match <CgProgram as ExprArena>::get(prog, expr_id) {
+        Some(CgExpr::Binary { op: BinaryOp::And, lhs, rhs, .. }) => {
+            let mut v = flatten_and_conjuncts(*lhs, prog);
+            v.extend(flatten_and_conjuncts(*rhs, prog));
+            v
+        }
+        _ => vec![expr_id],
+    }
+}
+
+/// True when `expr_id` is `Binary{EqU32|EqBool, Read(AgentField{field,
+/// target}), Lit(_)}` (either operand order) — the claim-CAS guard
+/// conjunct shape. Returns `(target, expected-literal expr id)`.
+fn conjunct_is_claim_guard(
+    expr_id: CgExprId,
+    field: AgentFieldId,
+    prog: &CgProgram,
+) -> Option<(AgentRef, CgExprId)> {
+    let CgExpr::Binary { op, lhs, rhs, .. } = <CgProgram as ExprArena>::get(prog, expr_id)? else {
+        return None;
+    };
+    if !matches!(op, BinaryOp::EqU32 | BinaryOp::EqBool) {
+        return None;
+    }
+    let lhs_node = <CgProgram as ExprArena>::get(prog, *lhs);
+    let rhs_node = <CgProgram as ExprArena>::get(prog, *rhs);
+    if let (
+        Some(CgExpr::Read(DataHandle::AgentField { field: f, target })),
+        Some(CgExpr::Lit(_)),
+    ) = (lhs_node, rhs_node)
+    {
+        if *f == field {
+            return Some((target.clone(), *rhs));
+        }
+    }
+    if let (
+        Some(CgExpr::Lit(_)),
+        Some(CgExpr::Read(DataHandle::AgentField { field: f, target })),
+    ) = (lhs_node, rhs_node)
+    {
+        if *f == field {
+            return Some((target.clone(), *lhs));
+        }
+    }
+    None
+}
+
+/// Try to rewrite `if (cond) { then }` (no `else` — checked by the
+/// caller) as the claim-CAS hazard fix. Returns `Ok(None)` when the
+/// shape doesn't match or the matched field wasn't promoted for this
+/// kernel (`ctx.claim_cas_fields`) — the caller falls back to the
+/// ordinary `If` emission.
+///
+/// # Why gate the WHOLE branch, not just the post-write tail
+///
+/// [`stmt_is_f32_const_assign`]'s "first-writer-wins" gate only wraps
+/// statements AFTER the literal write inside the same then-branch —
+/// sound there because every statement before it writes fields keyed
+/// on the EVENT'S OWN actor/local slots, which don't collide across
+/// concurrently-dispatched events with different actors. The claim
+/// shape's guard is a genuine precondition on entering the transaction
+/// at all (`agents.claimed_job(w) == 0u && agents.claimed(t) == 0u` —
+/// "may `w` claim `t`"), and the branch's OTHER writes (`claimed_job`,
+/// `job_site`, `claim_until` on `w`) must not apply when the claim on
+/// `t` is lost — a loser must come away with NO side effects, matching
+/// serial semantics (as if its event were processed on a later tick
+/// once `t` was already taken). So the CAS must gate entry to the
+/// branch, not just its tail.
+///
+/// # Shape
+///
+/// Splits `cond`'s `&&`-conjuncts into the one hazard conjunct
+/// (`agents.<field>(<ref>) == <expected>`) and the rest ("plain"
+/// conjuncts, evaluated first, unchanged — short-circuiting on them
+/// costs the CAS nothing when the request is doomed anyway for an
+/// unrelated reason, e.g. `w` already busy). Emits:
+///
+/// ```text
+/// if (<plain conjuncts>) {
+///     let _claim_cas_<id> = atomicCompareExchangeWeak(&agent_<f>[<idx>], <expected>, <new>);
+///     if (_claim_cas_<id>.exchanged) {
+///         <then, unmodified — the original literal write becomes a
+///          harmless redundant re-store of the value the CAS already
+///          wrote>
+///     }
+/// }
+/// ```
+///
+/// WGSL's `&&` short-circuits (spec-guaranteed), so the CAS attempt
+/// (a real side effect) never fires unless the plain conjuncts already
+/// passed — matching the original `&&`'s left-to-right evaluation.
+/// When there are no plain conjuncts the outer `if` is omitted.
+///
+/// Restricted to `else`-free Ifs by the caller: an `else` would need
+/// to fire when the CAS itself lost (not just when the plain conjuncts
+/// failed), which is a different, unimplemented shape — falling back
+/// to the plain check-then-set for that case leaves it exactly as
+/// racy as before the fix rather than risking a wrong rewrite.
+fn try_emit_claim_cas_if(
+    cond: CgExprId,
+    then: CgStmtListId,
+    if_stmt_id: CgStmtId,
+    ctx: &EmitCtx,
+) -> Result<Option<String>, EmitError> {
+    let Some((assign_sid, field)) = stmt_list_first_u32_const_assign(ctx.prog, then) else {
+        return Ok(None);
+    };
+    if !ctx.claim_cas_fields.borrow().contains(&field) {
+        return Ok(None);
+    }
+    let conjuncts = flatten_and_conjuncts(cond, ctx.prog);
+    let Some((hazard_pos, target, expected_expr)) = conjuncts
+        .iter()
+        .position(|c| conjunct_is_claim_guard(*c, field, ctx.prog).is_some())
+        .map(|i| {
+            let (t, e) = conjunct_is_claim_guard(conjuncts[i], field, ctx.prog).unwrap();
+            (i, t, e)
+        })
+    else {
+        return Ok(None);
+    };
+    let Some(CgStmt::Assign { value: new_val_expr, .. }) =
+        <CgProgram as StmtArena>::get(ctx.prog, assign_sid)
+    else {
+        return Ok(None);
+    };
+    let new_val_expr = *new_val_expr;
+
+    // Index expression for the hazard target, hoisting a
+    // `Target(expr_id)` through the same `pending_target_lets`
+    // mechanism the ordinary Read/Assign paths use (see the module
+    // doc's `AgentRef::Target(expr_id)` note) so the emitted CAS
+    // shares the same pre-bound `target_expr_<N>` as any other
+    // reference to the same underlying expression in this stmt.
+    let idx = match &target {
+        AgentRef::Self_ => "agent_id".to_string(),
+        AgentRef::EventTarget => "event_target_id".to_string(),
+        AgentRef::Actor => "actor_id".to_string(),
+        AgentRef::PerPairCandidate => "per_pair_candidate".to_string(),
+        AgentRef::Target(target_expr_id) => {
+            let already_bound = ctx.bound_target_exprs.borrow().contains(target_expr_id);
+            if !already_bound {
+                let target_wgsl = lower_cg_expr_to_wgsl(*target_expr_id, ctx)?;
+                ctx.pending_target_lets
+                    .borrow_mut()
+                    .push((*target_expr_id, target_wgsl));
+                ctx.bound_target_exprs
+                    .borrow_mut()
+                    .insert(*target_expr_id);
+            }
+            format!("target_expr_{}", target_expr_id.0)
+        }
+    };
+
+    let coerce = |s: String| match field.ty() {
+        AgentFieldTy::Bool => format!("select(0u, 1u, {s})"),
+        _ => s,
+    };
+    let expected_wgsl = coerce(lower_cg_expr_to_wgsl(expected_expr, ctx)?);
+    let new_wgsl = coerce(lower_cg_expr_to_wgsl(new_val_expr, ctx)?);
+    let snake = field.snake();
+    let sid = if_stmt_id.0;
+
+    let then_body = lower_cg_stmt_list_to_wgsl(then, ctx)?;
+    let gated = format!(
+        "let _claim_cas_{sid} = atomicCompareExchangeWeak(&agent_{snake}[{idx}], {expected_wgsl}, {new_wgsl});\n\
+         if (_claim_cas_{sid}.exchanged) {{\n{}\n}}",
+        indent_block(&then_body, 1),
+    );
+
+    let plain_conjuncts: Vec<CgExprId> = conjuncts
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != hazard_pos)
+        .map(|(_, e)| *e)
+        .collect();
+    if plain_conjuncts.is_empty() {
+        return Ok(Some(gated));
+    }
+    let mut plain_wgsl_parts = Vec::with_capacity(plain_conjuncts.len());
+    for e in &plain_conjuncts {
+        plain_wgsl_parts.push(lower_cg_expr_to_wgsl(*e, ctx)?);
+    }
+    let plain_cond = plain_wgsl_parts.join(" && ");
+    Ok(Some(format!(
+        "if ({plain_cond}) {{\n{}\n}}",
+        indent_block(&gated, 1),
+    )))
+}
+
+// ---------------------------------------------------------------------------
 // Structural handle naming
 // ---------------------------------------------------------------------------
 
@@ -1059,6 +1437,26 @@ fn ability_registry_column_token(column: super::super::data_handle::AbilityRegis
 /// `agent_<field>` — so the body's indexed access lines up against
 /// the declared `array<...>` binding without naming drift.
 fn agent_field_access(field: AgentFieldId, target: &AgentRef) -> String {
+    agent_field_access_named(field, target, &format!("agent_{}", field.snake()))
+}
+
+/// Same indexed-access shape as [`agent_field_access`] but against the
+/// pre-tick shadow buffer `agent_<field>_prev` instead of the live
+/// `agent_<field>` buffer. Used for cross-agent reads of a self-write
+/// + cross-read hazard field — see
+/// [`crate::cg::op::self_write_cross_read_hazard_fields`] and
+/// [`EmitCtx::hazard_shadow_fields`].
+fn agent_field_access_shadow_prev(field: AgentFieldId, target: &AgentRef) -> String {
+    agent_field_access_named(field, target, &format!("agent_{}_prev", field.snake()))
+}
+
+/// Shared indexed-access renderer: `<buf_name>[<index_expr>]`, with
+/// bool coercion applied per `field`'s storage type. `buf_name` is
+/// the declared binding identifier — either `agent_<field>` (live) or
+/// `agent_<field>_prev` (hazard shadow snapshot); both bindings share
+/// the same element type, so the index expression + bool coercion are
+/// identical either way.
+fn agent_field_access_named(field: AgentFieldId, target: &AgentRef, buf_name: &str) -> String {
     let index = match target {
         AgentRef::Self_ => "agent_id".to_string(),
         AgentRef::EventTarget => "event_target_id".to_string(),
@@ -1066,7 +1464,7 @@ fn agent_field_access(field: AgentFieldId, target: &AgentRef) -> String {
         AgentRef::PerPairCandidate => "per_pair_candidate".to_string(),
         AgentRef::Target(id) => format!("target_expr_{}", id.0),
     };
-    let raw = format!("agent_{}[{}]", field.snake(), index);
+    let raw = format!("{buf_name}[{index}]");
     // Bool fields are stored as `array<u32>` on the GPU (boolean
     // storage isn't host-shareable in WGSL, see `kernel.rs`'s
     // `AgentFieldTy::Bool => "array<u32>"`); coerce back to bool at
@@ -1089,7 +1487,34 @@ fn agent_field_access(field: AgentFieldId, target: &AgentRef) -> String {
 /// one decision point — extending the gate (e.g. adding a u32 RMW
 /// upgrade later) requires editing only this helper, not every read
 /// site. See [`f32_field_atomic_bit`] for the bit mapping.
+///
+/// Self-write + cross-read hazard shadowing takes priority over the
+/// f32 RMW upgrade: when `field` is in `ctx.hazard_shadow_fields` AND
+/// `target` is a cross-agent reference (anything but `Self_`), the
+/// read redirects to the pre-tick shadow buffer
+/// (`agent_field_access_shadow_prev`) instead of the live buffer. The
+/// shadow buffer is a plain read-only per-tick snapshot — it is never
+/// written inside a kernel, so it never needs (and never gets) the
+/// atomic-upgrade wrapper. A `Self_`-targeted read of a hazard field
+/// still reads the live buffer (self-reads aren't racy — no other
+/// thread writes this thread's own slot).
 fn agent_field_read_wgsl(field: AgentFieldId, target: &AgentRef, ctx: &EmitCtx) -> String {
+    if !matches!(target, AgentRef::Self_) && ctx.hazard_shadow_fields.borrow().contains(&field) {
+        return agent_field_access_shadow_prev(field, target);
+    }
+    // Claim-CAS field (see `EmitCtx::claim_cas_fields`): the backing
+    // buffer is `array<atomic<u32>>` in this kernel, so any read NOT
+    // already special-cased by `try_emit_claim_cas_if` (which builds
+    // its own CAS expression directly, never routing through here)
+    // must go through `atomicLoad`, with the same bool coercion
+    // `agent_field_access` applies for plain reads.
+    if ctx.claim_cas_fields.borrow().contains(&field) {
+        let lhs = agent_field_access_lvalue(field, target);
+        return match field.ty() {
+            AgentFieldTy::Bool => format!("(atomicLoad(&{lhs}) != 0u)"),
+            _ => format!("atomicLoad(&{lhs})"),
+        };
+    }
     if matches!(field.ty(), AgentFieldTy::F32) {
         if let Some(bit) = f32_field_atomic_bit(field) {
             if (ctx.f32_atomic_field_writes.get() >> bit) & 1 == 1 {
@@ -2560,6 +2985,24 @@ fn lower_cg_stmt_body_to_wgsl(
                         rhs = rhs,
                     ));
                 }
+                // Claim-CAS field write. When this kernel promoted
+                // `field` to `array<atomic<u32>>` (see
+                // `EmitCtx::claim_cas_fields`), EVERY write to it must
+                // go through `atomicStore` — a plain indexed
+                // assignment doesn't type-check against an atomic
+                // binding. This covers both the now-redundant literal
+                // write inside a rewritten `try_emit_claim_cas_if`
+                // branch (re-storing the value the CAS already wrote —
+                // harmless) and any other incidental write to the same
+                // field elsewhere in this kernel.
+                if ctx.claim_cas_fields.borrow().contains(field) {
+                    let lhs = agent_field_access_lvalue(*field, agent_ref);
+                    let coerced_rhs = match field.ty() {
+                        AgentFieldTy::Bool => format!("select(0u, 1u, {rhs})"),
+                        _ => rhs,
+                    };
+                    return Ok(format!("atomicStore(&{lhs}, {coerced_rhs});"));
+                }
                 // LHS uses the raw indexed access (no `(x != 0u)`
                 // coercion — that wrapper is not a valid lvalue). For
                 // bool fields the RHS must be coerced to u32 since
@@ -2577,6 +3020,16 @@ fn lower_cg_stmt_body_to_wgsl(
         }
         CgStmt::Emit { event, fields } => lower_emit_to_wgsl(event.0, fields, ctx),
         CgStmt::If { cond, then, else_ } => {
+            // Claim-CAS hazard rewrite — see `try_emit_claim_cas_if`'s
+            // doc for the shape and why an `else` disqualifies it.
+            // Checked first (and returns early on a match) so the
+            // ordinary cond/then-body lowering below never runs for a
+            // rewritten If — the CAS emit fully replaces both.
+            if else_.is_none() {
+                if let Some(rewritten) = try_emit_claim_cas_if(*cond, *then, stmt_id, ctx)? {
+                    return Ok(rewritten);
+                }
+            }
             let c = lower_cg_expr_to_wgsl(*cond, ctx)?;
             // Detect the "first-writer-wins" shape
             // — an inner Assign of a literal F32 to an f32 SoA column

@@ -155,37 +155,15 @@ verb Wait(self) =
 fn scoring_kernel_emits_action_selected_when_verb_present() {
     use dsl_compiler::cg::dispatch::DispatchShape;
     use dsl_compiler::cg::emit::kernel_topology_to_spec_and_body;
-    use dsl_compiler::cg::emit::wgsl_body::{EmitCtx, HandleNamingStrategy};
+    use dsl_compiler::cg::emit::wgsl_body::EmitCtx;
     use dsl_compiler::cg::schedule::synthesis::KernelTopology;
 
     fn build_emit_ctx<'a>(prog: &'a CgProgram) -> EmitCtx<'a> {
-        EmitCtx {
-            prog,
-            naming: HandleNamingStrategy::Structural,
-            tile_walk_index: std::cell::RefCell::new(None),
-            rng_loop_iter_var: std::cell::RefCell::new(None),
-            tables_referenced: std::cell::RefCell::new(
-                std::collections::BTreeSet::new(),
-            ),
-            dispatch: std::cell::Cell::new(None),
-            view_target_locals: std::cell::RefCell::new(Vec::new()),
-            pending_target_lets: std::cell::RefCell::new(Vec::new()),
-            bound_target_exprs: std::cell::RefCell::new(std::collections::HashSet::new()),
-            event_ring_atomic_loads: std::cell::Cell::new(false),
-            alive_atomic_writes: std::cell::Cell::new(false),
-            f32_atomic_field_writes: std::cell::Cell::new(0),
-            var_promoted_locals: std::cell::RefCell::new(std::collections::HashSet::new()),
-            // Compiler debug mode Phase 2: mirror the program-level
-            // bitset (default `NONE`); test fixtures here don't opt in.
-            debug_wgsl: prog.debug_wgsl,
-            // Post-CAS emit gating defaults to off.
-            f32_first_writer_gate: std::cell::Cell::new(None),
-            producer_kernel_ids: std::collections::BTreeMap::new(),
-            current_kernel_index: std::cell::Cell::new(None),
-            intra_emit_idx: std::cell::Cell::new(0),
-            serial_f32_fold: std::cell::Cell::new(false),
-            in_serial_fold_body: std::cell::Cell::new(false),
-        }
+        // Delegate to the canonical constructor (rather than a hand-
+        // duplicated field list) so this fixture doesn't need updating
+        // every time `EmitCtx` grows a new per-kernel emit-scratch
+        // field (e.g. `hazard_shadow_fields`).
+        EmitCtx::structural(prog)
     }
 
     fn scoring_op_index(cg: &CgProgram) -> usize {

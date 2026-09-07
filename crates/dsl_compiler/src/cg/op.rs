@@ -1106,6 +1106,84 @@ impl ComputeOp {
     }
 }
 
+/// True if `op` is a same-dispatch, one-thread-per-agent physics rule
+/// — the shape where a self-write and a cross-agent read of the same
+/// field can race within one GPU dispatch (no synchronization exists
+/// between threads). `on_event: None` physics rules retag to
+/// [`DispatchShape::OneShot`] when their body is an unbounded
+/// single-threaded scan (safe — no concurrent threads) or to
+/// [`DispatchShape::PerCell`] when tile-eligible; both `PerAgent` and
+/// `PerCell` still launch one thread per agent slot with no inter-
+/// thread ordering guarantee.
+fn is_racy_per_agent_physics_rule(op: &ComputeOp) -> bool {
+    matches!(op.kind, ComputeOpKind::PhysicsRule { on_event: None, .. })
+        && matches!(op.shape, DispatchShape::PerAgent | DispatchShape::PerCell)
+}
+
+/// Detect the self-write + cross-read hazard: fields for which some op
+/// in `ops` (a fused kernel's body, or a single-op kernel) self-writes
+/// `AgentField { field, target: Self_ }` from a same-dispatch per-agent
+/// physics rule (see [`is_racy_per_agent_physics_rule`]) AND some op in
+/// the SAME `ops` group reads `AgentField { field, target }` with
+/// `target != Self_` — a cross-agent read of the field being written
+/// this tick by another thread in the same dispatch.
+///
+/// Whether the cross-agent read observes the pre-tick or already-
+/// written value is undefined GPU thread-scheduling behaviour — this
+/// is the hazard `well_formed.rs`'s P6 per-agent exemption documents
+/// (self-write physics rules — Movement, Boids' `MoveBoid`, cooldown /
+/// stun-expiry sweeps — are the intended kernel API for per-tick state
+/// changes, but a rule that ALSO scans every other agent's value of
+/// the field it writes needs the writer's cross-reads redirected to a
+/// pre-tick shadow buffer; see `cg::emit::kernel`'s hazard-shadow
+/// binding synthesis and `cg::emit::wgsl_body::EmitCtx::hazard_shadow_fields`).
+///
+/// The cross-read side is NOT restricted to
+/// [`is_racy_per_agent_physics_rule`] ops — kernel fusion only groups
+/// ops sharing one [`DispatchShape`], so any other op fused into the
+/// same kernel body races the self-writer just the same regardless of
+/// its own `ComputeOpKind`.
+///
+/// General by construction: this walks `op.reads`/`op.writes` (already
+/// populated by the auto-walker for every op kind), not any specific
+/// fixture's field names — a future physics rule with this shape gets
+/// the shadow-buffer treatment automatically.
+pub fn self_write_cross_read_hazard_fields<'a>(
+    ops: impl IntoIterator<Item = &'a ComputeOp>,
+) -> std::collections::BTreeSet<AgentFieldId> {
+    let ops: Vec<&ComputeOp> = ops.into_iter().collect();
+    let mut self_writes: std::collections::BTreeSet<AgentFieldId> =
+        std::collections::BTreeSet::new();
+    for op in &ops {
+        if !is_racy_per_agent_physics_rule(op) {
+            continue;
+        }
+        for w in &op.writes {
+            if let DataHandle::AgentField {
+                field,
+                target: AgentRef::Self_,
+            } = w
+            {
+                self_writes.insert(*field);
+            }
+        }
+    }
+    if self_writes.is_empty() {
+        return std::collections::BTreeSet::new();
+    }
+    let mut hazard = std::collections::BTreeSet::new();
+    for op in &ops {
+        for r in &op.reads {
+            if let DataHandle::AgentField { field, target } = r {
+                if !matches!(target, AgentRef::Self_) && self_writes.contains(field) {
+                    hazard.insert(*field);
+                }
+            }
+        }
+    }
+    hazard
+}
+
 impl fmt::Display for ComputeOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -2109,5 +2187,144 @@ mod tests {
             )),
             "static grid_cells read still present"
         );
+    }
+
+    // ---- self_write_cross_read_hazard_fields ----
+
+    /// Build a minimal `PhysicsRule{on_event: None}` op with the given
+    /// dispatch shape and explicit reads/writes — bypasses the
+    /// auto-walker (which needs a full expr/stmt arena) since the
+    /// hazard detector only inspects `kind`/`shape`/`reads`/`writes`.
+    fn per_agent_physics_op(shape: DispatchShape, reads: Vec<DataHandle>, writes: Vec<DataHandle>) -> ComputeOp {
+        ComputeOp {
+            id: OpId(0),
+            kind: ComputeOpKind::PhysicsRule {
+                rule: PhysicsRuleId(0),
+                on_event: None,
+                body: crate::cg::stmt::CgStmtListId(0),
+                replayable: ReplayabilityFlag::Replayable,
+            },
+            reads,
+            writes,
+            shape,
+            span: Span::dummy(),
+        }
+    }
+
+    fn mask_op_with_reads(reads: Vec<DataHandle>) -> ComputeOp {
+        ComputeOp {
+            id: OpId(1),
+            kind: ComputeOpKind::MaskPredicate {
+                mask: MaskId(0),
+                predicate: CgExprId(0),
+            },
+            reads,
+            writes: Vec::new(),
+            shape: DispatchShape::PerAgent,
+            span: Span::dummy(),
+        }
+    }
+
+    fn pos_self_write() -> DataHandle {
+        DataHandle::AgentField {
+            field: AgentFieldId::Pos,
+            target: AgentRef::Self_,
+        }
+    }
+
+    fn pos_cross_read() -> DataHandle {
+        DataHandle::AgentField {
+            field: AgentFieldId::Pos,
+            target: AgentRef::PerPairCandidate,
+        }
+    }
+
+    #[test]
+    fn hazard_fields_flags_self_write_plus_cross_read_on_per_agent() {
+        let op = per_agent_physics_op(
+            DispatchShape::PerAgent,
+            vec![pos_cross_read()],
+            vec![pos_self_write()],
+        );
+        let hazard = self_write_cross_read_hazard_fields([&op]);
+        assert_eq!(hazard, [AgentFieldId::Pos].into_iter().collect());
+    }
+
+    #[test]
+    fn hazard_fields_flags_self_write_plus_cross_read_on_per_cell() {
+        let op = per_agent_physics_op(
+            DispatchShape::PerCell,
+            vec![pos_cross_read()],
+            vec![pos_self_write()],
+        );
+        let hazard = self_write_cross_read_hazard_fields([&op]);
+        assert_eq!(hazard, [AgentFieldId::Pos].into_iter().collect());
+    }
+
+    #[test]
+    fn hazard_fields_empty_when_only_self_write() {
+        let op = per_agent_physics_op(DispatchShape::PerAgent, vec![], vec![pos_self_write()]);
+        assert!(self_write_cross_read_hazard_fields([&op]).is_empty());
+    }
+
+    #[test]
+    fn hazard_fields_empty_when_only_cross_read() {
+        let op = per_agent_physics_op(DispatchShape::PerAgent, vec![pos_cross_read()], vec![]);
+        assert!(self_write_cross_read_hazard_fields([&op]).is_empty());
+    }
+
+    #[test]
+    fn hazard_fields_empty_for_one_shot_dispatch() {
+        // OneShot is the serial-scan retag (`for_each_agent` body
+        // form) — a single thread, so no cross-thread race exists
+        // even though the shape self-writes and cross-reads the same
+        // field.
+        let op = per_agent_physics_op(
+            DispatchShape::OneShot,
+            vec![pos_cross_read()],
+            vec![pos_self_write()],
+        );
+        assert!(self_write_cross_read_hazard_fields([&op]).is_empty());
+    }
+
+    #[test]
+    fn hazard_fields_empty_for_per_event_dispatch() {
+        // A PerEvent-dispatched op is never `on_event: None`, but pin
+        // the shape-gate directly: even a (structurally malformed)
+        // PerEvent shape must not be flagged.
+        let op = per_agent_physics_op(
+            DispatchShape::PerEvent {
+                source_ring: EventRingId(0),
+            },
+            vec![pos_cross_read()],
+            vec![pos_self_write()],
+        );
+        assert!(self_write_cross_read_hazard_fields([&op]).is_empty());
+    }
+
+    #[test]
+    fn hazard_fields_detects_cross_read_from_a_different_fused_op() {
+        // Fusion groups ops sharing one DispatchShape — a cross-read
+        // in a DIFFERENT op fused into the same kernel body races the
+        // self-writer just the same.
+        let writer = per_agent_physics_op(DispatchShape::PerAgent, vec![], vec![pos_self_write()]);
+        let reader = mask_op_with_reads(vec![pos_cross_read()]);
+        let hazard = self_write_cross_read_hazard_fields([&writer, &reader]);
+        assert_eq!(hazard, [AgentFieldId::Pos].into_iter().collect());
+    }
+
+    #[test]
+    fn hazard_fields_ignores_unrelated_field() {
+        // Self-write on Pos, cross-read on a DIFFERENT field (Vel) —
+        // no hazard on either field.
+        let op = per_agent_physics_op(
+            DispatchShape::PerAgent,
+            vec![DataHandle::AgentField {
+                field: AgentFieldId::Vel,
+                target: AgentRef::PerPairCandidate,
+            }],
+            vec![pos_self_write()],
+        );
+        assert!(self_write_cross_read_hazard_fields([&op]).is_empty());
     }
 }

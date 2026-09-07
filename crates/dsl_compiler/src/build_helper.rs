@@ -4654,6 +4654,39 @@ fn synthesize_generated_runtime_struct(
         } else {
             String::new()
         };
+        // Self-write + cross-read hazard shadow refresh (see
+        // `cg::op::self_write_cross_read_hazard_fields` /
+        // `cg::emit::kernel`'s `agent_<field>_prev` binding synthesis).
+        // A kernel that binds `agent_<field>_prev` self-writes `field`
+        // AND cross-reads it in the SAME dispatch — the cross-reads
+        // are wired to read the shadow buffer instead of the live one,
+        // so the shadow buffer must hold the value from BEFORE this
+        // dispatch's writes. Refresh it with a plain buffer copy
+        // recorded immediately before THIS kernel's own dispatch (same
+        // encoder, so ordering against every other kernel in
+        // `schedule::SCHEDULE` falls out for free) — one copy per
+        // hazard field, sized identically to the live buffer's
+        // allocation (`elem_bytes_for_wgsl_ty` mirrors the alloc-loop
+        // sizing above).
+        let hazard_copy_block: String = spec
+            .bindings
+            .iter()
+            .filter_map(|b| {
+                let live_name = b.name.strip_prefix("agent_")?.strip_suffix("_prev")?;
+                let live_name = format!("agent_{live_name}");
+                let elem_bytes = elem_bytes_for_wgsl_ty(&b.wgsl_ty).unwrap_or(4);
+                Some(format!(
+                    "                    encoder.copy_buffer_to_buffer(\n\
+                     \x20                       &self.{live_name}_buf,\n\
+                     \x20                       0,\n\
+                     \x20                       &self.{shadow_name}_buf,\n\
+                     \x20                       0,\n\
+                     \x20                       ((self.agent_count as u64) * {elem_bytes}u64).max(16),\n\
+                     \x20                   );\n",
+                    shadow_name = b.name,
+                ))
+            })
+            .collect();
         let (loop_open, loop_close) = if let Some(n) = fixed_point_max_iter {
             (
                 format!("                    for _iter in 0..{n}u32 {{\n"),
@@ -4669,6 +4702,7 @@ fn synthesize_generated_runtime_struct(
         let dispatch_count = view_kernel_dispatch_expr(spec);
         out.push_str(&format!(
             "                {arm_pattern} => {{\n\
+             {hazard_copy_block}\
              {cfg_copy_block}\
              {loop_open}\
              \x20                   let extras = {kname}::{pascal}Extras {{\n\
